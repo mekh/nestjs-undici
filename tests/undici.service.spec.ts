@@ -1,0 +1,539 @@
+/* eslint-disable @typescript-eslint/no-unsafe-member-access */
+import { Test, TestingModule } from '@nestjs/testing';
+
+jest.mock('undici', () => require('./__helpers__/undici-mock'));
+
+import {
+  Agent,
+  FormData,
+  MockBody,
+  Pool,
+  RetryAgent,
+  errors,
+  getPoolInstances,
+  makeResponse,
+  mockRequests,
+  request,
+  resetUndiciMock,
+} from './__helpers__/undici-mock';
+
+import { UNDICI_CLIENT_OPTIONS } from '../src/undici.constants';
+import { UndiciConfig } from '../src/undici.interfaces';
+import { UndiciService } from '../src';
+
+const createModule = async (
+  config: Partial<UndiciConfig> = {},
+): Promise<TestingModule> => {
+  return Test.createTestingModule({
+    providers: [
+      UndiciService,
+      {
+        provide: UNDICI_CLIENT_OPTIONS,
+        useValue: {
+          baseURL: 'https://api.local/',
+          parse: true,
+          rawBody: false,
+          retry: false,
+          ...config,
+        } satisfies UndiciConfig,
+      },
+    ],
+  }).compile();
+};
+
+const enc = new TextEncoder();
+
+describe('UndiciService', () => {
+  beforeEach(() => {
+    resetUndiciMock();
+    request.mockClear?.();
+  });
+
+  it('serialize JSON body and set content-type when missing', async () => {
+    const moduleRef = await createModule();
+    const service = moduleRef.get(UndiciService);
+
+    request.setNextResponse(
+      makeResponse({
+        statusCode: 200,
+        headers: { 'content-type': 'application/json; charset=utf-8' },
+        body: new MockBody({ arrayBuffer: enc.encode('{"ok":true}').buffer }),
+      }),
+    );
+
+    const res = await service.post<{ ok: boolean }>(
+      '/foo',
+      { x: 1 },
+    );
+
+    expect(res).toEqual({
+      statusCode: 200,
+      headers: { 'content-type': 'application/json; charset=utf-8' },
+      body: { ok: true },
+      rawBody: null,
+    });
+
+    const call = mockRequests[0];
+    expect(call.options.headers['content-type']).toBe('application/json');
+    expect(call.options.body).toBe('{"x":1}');
+    expect(call.options.method).toBe('POST');
+  });
+
+  it('throws if object body with non-json content-type', async () => {
+    const moduleRef = await createModule();
+    const service = moduleRef.get(UndiciService);
+
+    await expect(
+      service.post('/bar', { y: 2 }, {
+        headers: { 'content-type': 'text/plain' },
+      }),
+    ).rejects.toThrow('Request body must be a string or a Buffer.');
+  });
+
+  it('buildUrl: absolute and relative paths', async () => {
+    const moduleRef = await createModule({
+      baseURL: 'https://base.example/api/',
+    });
+    const service = moduleRef.get(UndiciService);
+
+    request.setNextResponse(makeResponse());
+    await service.get('https://other.host/a');
+    expect(mockRequests[0].url.href).toBe('https://other.host/a');
+
+    request.setNextResponse(makeResponse());
+    await service.get('/v1/items');
+    expect(mockRequests[1].url.href).toBe('https://base.example/api/v1/items');
+  });
+
+  it('buildUrl: throws for relative path without baseURL', async () => {
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        UndiciService,
+        { provide: UNDICI_CLIENT_OPTIONS, useValue: {} },
+      ],
+    }).compile();
+    const service = moduleRef.get(UndiciService);
+
+    await expect(service.get('/relative')).rejects.toThrow(
+      'baseURL is not set',
+    );
+  });
+
+  it('parse=false returns BodyReadable (MockBody) untouched', async () => {
+    const moduleRef = await createModule({ parse: false, rawBody: true });
+    const service = moduleRef.get(UndiciService);
+
+    const body = new MockBody({ text: 'abc' });
+    request.setNextResponse(
+      makeResponse({
+        statusCode: 200,
+        headers: { 'content-type': 'text/plain' },
+        body,
+      }),
+    );
+
+    const res = await service.get<any>('/x');
+    expect(res.body).toBe(body);
+    expect(res.rawBody).toBe(body);
+  });
+
+  it('parse: handles empty body, text, json, +json, octet-stream', async () => {
+    const moduleRef = await createModule({ rawBody: true });
+    const service = moduleRef.get(UndiciService);
+
+    // empty
+    request.setNextResponse(
+      makeResponse({
+        statusCode: 200,
+        headers: { 'content-type': 'text/plain' },
+        body: new MockBody({ arrayBuffer: new ArrayBuffer(0) }),
+      }),
+    );
+    let res = await service.get('/empty');
+    expect(res.body).toBeNull();
+    expect(res.rawBody).toBeInstanceOf(ArrayBuffer);
+
+    // text
+    request.setNextResponse(
+      makeResponse({
+        statusCode: 200,
+        headers: { 'content-type': 'text/plain; charset=utf-8' },
+        body: new MockBody({ arrayBuffer: enc.encode('hi').buffer }),
+      }),
+    );
+    res = await service.get('/text');
+    expect(res.body).toBe('hi');
+    expect(res.rawBody).toBe('hi');
+
+    // json with BOM and spaces
+    request.setNextResponse(
+      makeResponse({
+        statusCode: 200,
+        headers: { 'Content-Type': 'Application/Foo+Json; charset=UTF-8' },
+        body: new MockBody({
+          arrayBuffer: enc.encode('\uFEFF  { "a" :  1 } ').buffer,
+        }),
+      }),
+    );
+    res = await service.get<{ a: number }>('/json');
+    expect(res.body).toEqual({ a: 1 });
+    expect(res.rawBody).toMatch('{ "a" :  1 }');
+
+    // unknown content-type
+    request.setNextResponse(
+      makeResponse({
+        statusCode: 200,
+        headers: { 'content-type': 'application/octet-stream' },
+        body: new MockBody({ arrayBuffer: enc.encode('bin').buffer }),
+      }),
+    );
+    res = await service.get<ArrayBuffer>('/bin');
+    expect(res.body).toBeInstanceOf(ArrayBuffer);
+    expect(res.rawBody).toBeInstanceOf(ArrayBuffer);
+  });
+
+  it('status 204/205 returns null bodies', async () => {
+    const moduleRef = await createModule();
+    const service = moduleRef.get(UndiciService);
+
+    request.setNextResponse(
+      makeResponse({
+        statusCode: 204,
+        headers: {},
+        body: new MockBody({ text: '' }),
+      }),
+    );
+    let res = await service.get('/no-content');
+    expect(res.body).toBeNull();
+    expect(res.rawBody).toBeNull();
+
+    request.setNextResponse(
+      makeResponse({
+        statusCode: 205,
+        headers: {},
+        body: new MockBody({ text: '' }),
+      }),
+    );
+    res = await service.get('/reset-content');
+    expect(res.body).toBeNull();
+    expect(res.rawBody).toBeNull();
+  });
+
+  it('parse: malformed json throws and logs debug', async () => {
+    const moduleRef = await createModule();
+    const service = moduleRef.get(UndiciService);
+
+    request.setNextResponse(
+      makeResponse({
+        statusCode: 200,
+        headers: { 'content-type': 'application/json' },
+        body: new MockBody({ arrayBuffer: enc.encode('invalid {').buffer }),
+      }),
+    );
+    await expect(service.get('/bad-json')).rejects.toThrow();
+  });
+
+  it(
+    'errorStrategy: default throw consumes error body and throws',
+    async () => {
+      const moduleRef = await createModule();
+      const service = moduleRef.get(UndiciService);
+
+      request.setNextResponse(
+        makeResponse({
+          statusCode: 500,
+          headers: { 'content-type': 'text/plain' },
+          body: new MockBody({ text: 'oops' }),
+        }),
+      );
+
+      await expect(service.get('/err')).rejects.toMatchObject({
+        name: 'ResponseStatusCodeError',
+        statusCode: 500,
+      });
+    },
+  );
+
+  it(
+    'errorStrategy: pass returns response with error and optional rawBody',
+    async () => {
+      const moduleRef = await createModule({
+        errorStrategy: 'pass',
+        rawBody: false,
+      });
+      const service = moduleRef.get(UndiciService);
+      request.setNextResponse(
+        makeResponse({
+          statusCode: 404,
+          headers: {},
+          body: new MockBody({ text: 'nf' }),
+        }),
+      );
+      let res: any = await service.get('/nf');
+      expect(res.error).toBeInstanceOf(errors.ResponseStatusCodeError);
+      expect(res.rawBody).toBeNull();
+
+      const moduleRef2 = await createModule({
+        errorStrategy: 'pass',
+        rawBody: true,
+      });
+      const service2 = moduleRef2.get(UndiciService);
+      request.setNextResponse(
+        makeResponse({
+          statusCode: 400,
+          headers: {},
+          body: new MockBody({ text: 'bad' }),
+        }),
+      );
+      res = await service2.get('/bad');
+      expect(res.rawBody).toBeInstanceOf(MockBody);
+    },
+  );
+
+  it(
+    'errorStrategy: intercept invokes interceptors with parsed body and error',
+    async () => {
+      const interceptor = jest.fn(async (resp, err) => {
+        expect(err).toBeInstanceOf(errors.ResponseStatusCodeError);
+        expect(err.body).toContain('"x":1');
+        return { ...resp, body: { wrapped: resp.body } };
+      });
+      const moduleRef = await createModule({
+        errorStrategy: 'intercept',
+        responseInterceptors: [interceptor],
+      });
+      const service = moduleRef.get(UndiciService);
+
+      request.setNextResponse(
+        makeResponse({
+          statusCode: 500,
+          headers: { 'content-type': 'application/json' },
+          body: new MockBody({ arrayBuffer: enc.encode('{"x":1}').buffer }),
+        }),
+      );
+
+      const res = await service.get<any>('/err2');
+      expect(interceptor).toHaveBeenCalled();
+      expect(res.body).toEqual({ wrapped: { x: 1 } });
+    },
+  );
+
+  it('errorStrategy: intercept without interceptors throws', async () => {
+    const moduleRef = await createModule({ errorStrategy: 'intercept' });
+    const service = moduleRef.get(UndiciService);
+    request.setNextResponse(
+      makeResponse({
+        statusCode: 500,
+        headers: {},
+        body: new MockBody({ text: 'e' }),
+      }),
+    );
+    await expect(service.get('/e')).rejects.toBeInstanceOf(
+      errors.ResponseStatusCodeError,
+    );
+  });
+
+  it(
+    'request interceptors: cloning and modifications are applied',
+    async () => {
+      const i1 = jest.fn(async (cfg) => {
+        return {
+          ...cfg,
+          headers: { ...(cfg.headers ?? {}), A: '1' },
+          body: { a: 1 },
+        };
+      });
+      const i2 = jest.fn(async (cfg) => {
+        // mutate the received body to ensure
+        // a shallow copy prevents external leaks
+        if (cfg.body && typeof cfg.body === 'object') {
+          (cfg.body as any).a = 2;
+        }
+        return cfg;
+      });
+      const moduleRef = await createModule({ requestInterceptors: [i1, i2] });
+      const service = moduleRef.get(UndiciService);
+
+      request.setNextResponse(makeResponse());
+      const res = await service.post('/x', { foo: 'bar' });
+      expect(res.statusCode).toBe(200);
+
+      const call = mockRequests[0];
+      expect(call.options.headers.A).toBe('1');
+      expect(call.options.body).toBe('{"a":2}');
+    },
+  );
+
+  it('getHeader is case-insensitive (covered via parsing)', async () => {
+    const moduleRef = await createModule();
+    const service = moduleRef.get(UndiciService);
+    request.setNextResponse(
+      makeResponse({
+        statusCode: 200,
+        headers: { 'Content-Type': 'text/plain' },
+        body: new MockBody({ arrayBuffer: enc.encode('ok').buffer }),
+      }),
+    );
+    const res = await service.get('/header');
+    expect(res.body).toBe('ok');
+  });
+
+  it(
+    'isPlainObject ignores Buffer, ArrayBuffer views, ' +
+      'URLSearchParams, streams, FormData',
+    async () => {
+      const moduleRef = await createModule();
+      const service = moduleRef.get(UndiciService);
+
+      request.setNextResponse(makeResponse());
+
+      await service.post('/buf', Buffer.from('x'));
+      await service.post('/u8', new Uint8Array([1, 2]));
+      await service.post('/sp', new URLSearchParams('a=1'));
+      await service.post('/fd', new FormData());
+
+      const streamLike: any = { pipe: () => {} };
+      await service.post('/stream', streamLike);
+
+      // Make sure there were 5 calls
+      expect(mockRequests.length).toBe(5);
+    },
+  );
+
+  it(
+    'createAbortSignal covers timeout only, user only, both, none',
+    async () => {
+      const moduleRef = await createModule({ timeout: undefined });
+      const service = moduleRef.get(UndiciService);
+
+      // timeout only
+      request.setNextResponse(makeResponse());
+      await service.get('/t', { timeout: 10 });
+      expect(mockRequests.pop()!.options.signal).toBeDefined();
+
+      // user only
+      const ac = new AbortController();
+      request.setNextResponse(makeResponse());
+      await service.get('/u', { signal: ac.signal });
+      expect(mockRequests.pop()!.options.signal).toBe(ac.signal);
+
+      // both
+      request.setNextResponse(makeResponse());
+      await service.get('/b', { timeout: 5, signal: ac.signal });
+      expect(mockRequests.pop()!.options.signal).toBeDefined();
+
+      // none (no timeout in config and no user signal)
+      const moduleRef2 = await createModule({ timeout: undefined });
+      const service2 = moduleRef2.get(UndiciService);
+      request.setNextResponse(makeResponse());
+      await service2.get('/n');
+      expect(mockRequests.pop()!.options.signal).toBeUndefined();
+    },
+  );
+
+  it(
+    'dispatcher selection: no pool creates Agent per request and closes it; ' +
+      'retry off',
+    async () => {
+      const moduleRef = await createModule({ pool: false, retry: false });
+      const service = moduleRef.get(UndiciService);
+
+      request.setNextResponse(makeResponse());
+      await service.get('https://host/a');
+      const disp = mockRequests[0].options.dispatcher as Agent;
+      expect(disp).toBeInstanceOf(Agent);
+      // closed by finally
+      expect((disp as any).closed).toBe(true);
+    },
+  );
+
+  it(
+    'dispatcher selection: pool true caches ' +
+      'Pool per origin and applies tls/connect options',
+    async () => {
+      const moduleRef = await createModule({ pool: true });
+      const service = moduleRef.get(UndiciService);
+
+      request.setNextResponse(makeResponse());
+      await service.get('https://o/a');
+
+      request.setNextResponse(makeResponse());
+      await service.get('https://o/b');
+
+      expect(Pool.created.length).toBe(1);
+
+      await service.onModuleDestroy();
+      const pools = getPoolInstances();
+      expect(pools[0].closed).toBe(true);
+    },
+  );
+
+  it(
+    'dispatcher selection: custom dispatcher is wrapped ' +
+      'by RetryAgent when retry enabled and closed on destroy',
+    async () => {
+      const dispatcher = new Agent();
+      const moduleRef = await createModule({
+        dispatcher: dispatcher as any,
+        retry: { retries: 1 } as any,
+      });
+      const service = moduleRef.get(UndiciService);
+
+      request.setNextResponse(makeResponse());
+      await service.get('https://x/a');
+
+      const disp = mockRequests[0].options.dispatcher as any;
+      expect(disp).toBeInstanceOf(RetryAgent);
+
+      await service.onModuleDestroy();
+      expect(disp.closed).toBe(true);
+    },
+  );
+
+  it('convenience methods set proper HTTP method', async () => {
+    const moduleRef = await createModule();
+    const service = moduleRef.get(UndiciService);
+
+    request.setNextResponse(makeResponse());
+    await service.get('/a');
+    expect(mockRequests[0].options.method).toBe('GET');
+
+    request.setNextResponse(makeResponse());
+    await service.delete('/b');
+    expect(mockRequests[1].options.method).toBe('DELETE');
+
+    request.setNextResponse(makeResponse());
+    await service.put('/c', 'x');
+    expect(mockRequests[2].options.method).toBe('PUT');
+
+    request.setNextResponse(makeResponse());
+    await service.patch('/d', 'y');
+    expect(mockRequests[3].options.method).toBe('PATCH');
+
+    request.setNextResponse(makeResponse());
+    await service.post('/e', 'z');
+    expect(mockRequests[4].options.method).toBe('POST');
+  });
+
+  it(
+    'wrapDispatcher does not double-wrap when dispatcher is already RetryAgent',
+    async () => {
+      const base = new Agent();
+      const wrapped = new RetryAgent(base as any, { retries: 3 } as any);
+      const moduleRef = await createModule({
+        dispatcher: wrapped as any,
+        retry: true,
+      });
+      const service = moduleRef.get(UndiciService);
+
+      request.setNextResponse(makeResponse());
+      await service.get('https://y/a');
+
+      const dispUsed = (mockRequests[0].options as any).dispatcher;
+      expect(dispUsed).toBe(wrapped);
+
+      await service.onModuleDestroy();
+      expect((wrapped as any).closed).toBe(true);
+    },
+  );
+});

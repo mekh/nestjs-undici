@@ -1,0 +1,61 @@
+{
+  "name": "@toxicoder/nestjs-undici",
+  "version": "0.0.1",
+  "description": "Undici module for NestJS",
+  "author": "toxicoder",
+  "main": "dist/index.js",
+  "types": "dist/undici.interfaces.d.ts",
+  "license": "ISC",
+  "keywords": [
+    "undici",
+    "http",
+    "https",
+    "http2",
+    "client",
+    "nestjs"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "undici": "^7.13.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.33.0",
+    "@nestjs/testing": "^11.1.6",
+    "@stylistic/eslint-plugin-ts": "^4.4.1",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24.3.0",
+    "@typescript-eslint/parser": "^8.39.1",
+    "dprint": "^0.50.1",
+    "eslint": "^9.33.0",
+    "eslint-import-resolver-typescript": "^4.4.4",
+    "eslint-plugin-import-x": "^4.16.1",
+    "espree": "^10.4.0",
+    "globals": "^16.3.0",
+    "jest": "^30.0.5",
+    "ts-jest": "^29.4.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.39.1"
+  },
+  "peerDependencies": {
+    "@nestjs/common": ">= 10.0.0",
+    "@nestjs/core": ">= 10.0.0"
+  },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mekh/nestjs-undici.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mekh/nestjs-undici/issues"
+  },
+  "homepage": "https://github.com/mekh/nestjs-undici#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "packageManager": "pnpm@10.14.0+sha512.ad27a79641b49c3e481a16a805baa71817a04bbe06a38d17e60e2eaee83f6a146c6a688125f5792e48dd5ba30e7da52a5cda4c3992b9ccf333f9ce223af84748"
+}
