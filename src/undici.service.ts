@@ -384,11 +384,7 @@ export class UndiciService implements OnModuleDestroy {
     }
 
     try {
-      const sanitized = trimmed.charCodeAt(0) === 0xFEFF // strip BOM
-        ? trimmed.slice(1)
-        : trimmed;
-
-      return { body: JSON.parse(sanitized), rawBody: text };
+      return { body: JSON.parse(trimmed), rawBody: text };
     } catch (e) {
       const { method, url } = reqConfig;
       this.logger.debug(
