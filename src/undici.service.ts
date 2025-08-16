@@ -109,11 +109,17 @@ export class UndiciService implements OnModuleDestroy {
   public async request<TBody, TRaw>(
     options: UndiciRequestOptions,
   ): Promise<UndiciResponse<TBody, TRaw>> {
-    const url = this.buildUrl(options.path);
-    const reqConfig = await this.applyRequestInterceptors({ ...options, url });
+    const { path, ...opts } = options;
+
+    const reqConfig = await this.applyRequestInterceptors({
+      ...opts,
+      url: this.buildUrl(options.path),
+    });
+
     const requestUrl = reqConfig.url;
     const requestHeaders = { ...reqConfig.headers };
-    const dispatcher = this.getDispatcher(requestUrl, reqConfig);
+    const dispatcher = reqConfig.dispatcher ??
+      this.getDispatcher(requestUrl, reqConfig);
 
     const ct = this.getHeader(requestHeaders, 'content-type');
     const isJsonCt = !ct || this.isJsonContentType(ct);
@@ -137,7 +143,7 @@ export class UndiciService implements OnModuleDestroy {
       );
     }
 
-    const { url: u, timeout, tls, body, headers, ...undiciOptions } = reqConfig;
+    const { url, timeout, tls, body, headers, ...undiciOptions } = reqConfig;
 
     const signal = this.createAbortSignal(reqConfig);
 
@@ -151,13 +157,15 @@ export class UndiciService implements OnModuleDestroy {
         signal,
       });
     } finally {
-      if (!this.config.pool && !this.dispatcher && dispatcher) {
-        await dispatcher.close();
+      /** Close only if it's a dispatcher created by this service.*/
+      if (!reqConfig.dispatcher && dispatcher) {
+        if (!this.config.pool && !this.dispatcher) {
+          await dispatcher.close();
+        }
       }
     }
 
-    const method = reqConfig.method ?? 'GET';
-    return this.handleResponse<TBody, TRaw>(res, method, requestUrl);
+    return this.handleResponse<TBody, TRaw>(res, reqConfig);
   }
 
   private createAbortSignal(
@@ -174,10 +182,6 @@ export class UndiciService implements OnModuleDestroy {
       ...timeoutValue ? [AbortSignal.timeout(timeoutValue)] : [],
       ...userSignal ? [userSignal] : [],
     ];
-
-    if (signals.length === 1) {
-      return signals[0];
-    }
 
     return signals.length === 1
       ? signals[0]
@@ -281,14 +285,14 @@ export class UndiciService implements OnModuleDestroy {
 
   private async handleResponse<TBody, TRaw>(
     response: Dispatcher.ResponseData,
-    method: string,
-    url: URL,
+    reqConfig: UndiciRequestConfig,
   ): Promise<UndiciResponse<TBody, TRaw>> {
     const { statusCode, headers } = response;
     const interceptors = this.config.responseInterceptors ?? [];
     const hasInterceptors = interceptors.length > 0;
+    const includeRawBody = reqConfig.rawBody ?? this.config.rawBody;
 
-    let errorStrategy = this.config.errorStrategy;
+    let errorStrategy = reqConfig.errorStrategy ?? this.config.errorStrategy;
     errorStrategy ??= hasInterceptors ? 'intercept' : 'throw';
 
     let error = null;
@@ -316,9 +320,7 @@ export class UndiciService implements OnModuleDestroy {
         ...response,
         body: response.body as TBody,
         error,
-        ...this.config.rawBody
-          ? { rawBody: response.body }
-          : { rawBody: null },
+        rawBody: includeRawBody ? response.body : null,
       };
     }
 
@@ -326,7 +328,7 @@ export class UndiciService implements OnModuleDestroy {
       throw error;
     }
 
-    const { body, rawBody } = await this.parseContent(response, method, url);
+    const { body, rawBody } = await this.parseContent(response, reqConfig);
 
     /** Enrich error with rawBody */
     if (error && error.body == null) {
@@ -336,19 +338,21 @@ export class UndiciService implements OnModuleDestroy {
     return this.applyResponseInterceptors<UndiciResponse<TBody, TRaw>>(
       {
         ...response,
-        ...this.config.rawBody ? { rawBody } : { rawBody: null },
+        rawBody: includeRawBody ? rawBody : null,
         body,
       },
+      reqConfig,
       error,
     );
   }
 
   private async parseContent(
     res: Dispatcher.ResponseData,
-    method: string,
-    url: URL,
+    reqConfig: UndiciRequestConfig,
   ): Promise<Pick<UndiciResponse<any, any>, 'body' | 'rawBody'>> {
-    if (this.config.parse === false) {
+    const shouldParse = reqConfig.parse ?? this.config.parse;
+
+    if (shouldParse === false) {
       return { body: res.body, rawBody: res.body };
     }
 
@@ -386,6 +390,7 @@ export class UndiciService implements OnModuleDestroy {
 
       return { body: JSON.parse(sanitized), rawBody: text };
     } catch (e) {
+      const { method, url } = reqConfig;
       this.logger.debug(
         `Failed to parse JSON from ${method} ${url.href} → ${res.statusCode}`,
         e,
@@ -420,6 +425,8 @@ export class UndiciService implements OnModuleDestroy {
     config: UndiciRequestConfig,
   ): Promise<UndiciRequestConfig> {
     let res = config;
+    const interceptors = config.requestInterceptors ??
+      this.config.requestInterceptors ?? [];
 
     const shallowCopy = <T extends UndiciRequestConfig>(reqConfig: T): T => {
       const headers = { ...res.headers };
@@ -431,7 +438,7 @@ export class UndiciService implements OnModuleDestroy {
       return { ...reqConfig, headers, query, body };
     };
 
-    for (const interceptor of this.config.requestInterceptors ?? []) {
+    for (const interceptor of interceptors) {
       res = await interceptor(shallowCopy(res));
     }
 
@@ -440,11 +447,14 @@ export class UndiciService implements OnModuleDestroy {
 
   private async applyResponseInterceptors<T>(
     response: UndiciResponse<any>,
+    reqConfig: UndiciRequestConfig,
     error?: any,
   ): Promise<T> {
     let res = response;
+    const interceptors = reqConfig.responseInterceptors ??
+      this.config.responseInterceptors ?? [];
 
-    for (const interceptor of this.config.responseInterceptors ?? []) {
+    for (const interceptor of interceptors) {
       res = await interceptor(res, error);
     }
 

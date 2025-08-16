@@ -11,6 +11,7 @@ A lightweight NestJS library built on top of the undici HTTP client. It provides
 - Graceful shutdown: closes dispatcher and connection pools on module destroy
 
 ## Table of contents
+
 - [Quick overview](#quick-overview)
 - [Installation and compatibility](#installation-and-compatibility)
 - [Getting started](#getting-started)
@@ -25,6 +26,7 @@ A lightweight NestJS library built on top of the undici HTTP client. It provides
   - [Parsing and streaming](#parsing-and-streaming)
   - [Error strategies](#error-strategies)
   - [Interceptors](#interceptors)
+  - [Per-request overrides](#per-request-overrides)
 - [API reference](#api-reference)
   - [UndiciModule](#undicimodule)
   - [UndiciService](#undiciservice)
@@ -155,7 +157,7 @@ Example:
 
 ```ts
 import { Injectable } from '@nestjs/common';
-import { UndiciService, FormData } from '@toxicoder/nestjs-undici';
+import { FormData, UndiciService } from '@toxicoder/nestjs-undici';
 
 @Injectable()
 export class UploadService {
@@ -207,10 +209,11 @@ Notes:
 
 Dispatcher selection logic inside the service:
 
-- If a custom `dispatcher` is provided in the config, it is always used (and optionally wrapped by `RetryAgent` when `retry` is enabled).
+- If a custom `dispatcher` is provided in the service config (module options), it is always used and will be wrapped by `RetryAgent` when `retry` is enabled.
+- If a custom `dispatcher` is provided per request (via request options), it is used as-is and is not wrapped. You are responsible for its lifecycle.
 - If `pool` is `false`, a new `Agent` is created per request (no connection reuse). This is useful when connecting to the same origin with different TLS configs or when avoiding persistent connections.
 - If `pool` is `true`, a `Pool` is created and cached per origin. The TLS config used for the first request to an origin is reused for subsequent requests to the same origin.
-- On module destroy, the custom dispatcher and all created pools are closed.
+- On module destroy, the service-level dispatcher and all created pools are closed. Per-request custom dispatchers are not closed by the service.
 
 ### Retry
 
@@ -246,13 +249,19 @@ UndiciModule.forRoot({
   - Status 204/205 → both `body` and `rawBody` are `null`
 - `parse: false`: the service returns the undici `BodyReadable` without consumption/parsing (streaming mode). Interceptors receive the raw stream.
 
+You can control `parse` globally or per request.
+
 ### Error strategies
 
 - `throw` (default unless response interceptors exist): throws `ResponseStatusCodeError` for HTTP status >= 400. The error body is consumed if parsing would not happen later.
 - `pass`: returns the response with an `error` property; `body` is the raw stream and `rawBody` is either the same stream (when `rawBody=true`) or `null`.
 - `intercept`: calls response interceptors with the parsed body and the error; if there are no interceptors, the error is thrown.
 
+You can set the error strategy globally via module config or per-request via `errorStrategy` option.
+
 ### Interceptors
+
+You can register interceptors globally (in module config) or per request (via request options).
 
 - Request interceptors: `UndiciRequestInterceptor` receive a shallow copy of the config allowing safe mutation without leaking changes across interceptors.
 - Response interceptors: `UndiciResponseInterceptor` run in order and can transform the response and/or inspect the error.
@@ -260,6 +269,7 @@ UndiciModule.forRoot({
 Examples:
 
 ```ts
+// Global (module-level)
 UndiciModule.forRoot({
   baseURL: 'https://api.example.com',
   requestInterceptors: [
@@ -278,7 +288,37 @@ UndiciModule.forRoot({
     },
   ],
 });
+
+// Per request
+await http.get('/users', {
+  requestInterceptors: [
+    async (cfg) => ({
+      ...cfg,
+      headers: { ...(cfg.headers ?? {}), 'x-req-id': crypto.randomUUID() },
+    }),
+  ],
+  responseInterceptors: [
+    async (resp) => ({ ...resp, headers: { ...resp.headers, 'x-doc': 'ok' } }),
+  ],
+  errorStrategy: 'intercept',
+  rawBody: true,
+  parse: true,
+});
 ```
+
+### Per-request overrides
+
+Most configuration options can be overridden per request by passing an `options` object to the helper methods or to `request()`:
+
+- headers, timeout, signal
+- dispatcher (used as-is and not auto-wrapped by RetryAgent)
+- rawBody (include rawBody in responses)
+- parse (enable/disable auto-parsing)
+- tls (per-request TLS options used when creating transient Agent/Pool)
+- errorStrategy ('throw' | 'pass' | 'intercept')
+- requestInterceptors / responseInterceptors (appended to global interceptors, run in order)
+
+Note: `retry` is configured at the service level. If you supply a custom dispatcher per request, retry wrapping is bypassed.
 
 ## API reference
 
@@ -295,7 +335,7 @@ UndiciModule.forRoot({
 - `put<TBody, TRaw = string | Buffer | ArrayBuffer>(url, body, options?)`
 - `patch<TBody, TRaw = string | Buffer | ArrayBuffer>(url, body, options?)`
 - `delete<TBody, TRaw = string | Buffer | ArrayBuffer>(url, options?)`
-- `request<TBody, TRaw>(config: UndiciRequestConfig)` — low-level method used by helpers.
+- `request<TBody, TRaw>(config: UndiciRequestConfig)` — low-level method used by helpers. Supports per-request overrides: `headers`, `timeout`, `signal`, `dispatcher`, `rawBody`, `parse`, `tls`, `errorStrategy`, `requestInterceptors`, `responseInterceptors`.
 
 Behavioral notes:
 
@@ -306,7 +346,8 @@ Behavioral notes:
 ### Types and interfaces
 
 - `UndiciConfig`: configuration (baseURL, timeout, interceptors, dispatcher, rawBody, parse, tls, pool, retry, errorStrategy)
-- `UndiciRequestConfig`: request configuration (url, headers, body, timeout, tls, signal, and undici options)
+- `UndiciRequestOptions`: per-request options (path, headers, body, timeout, signal, dispatcher, rawBody, parse, tls, errorStrategy, request/response interceptors). Note: `retry` is configured at service level; providing a per-request dispatcher bypasses retry wrapping.
+- `UndiciRequestConfig`: internal request configuration (url, headers, body, timeout, tls, signal, and the same override options)
 - `UndiciResponse<TBody, TRaw>`: response union with typed `body` and optional `rawBody` and `error`
 - `UndiciRequestInterceptor`, `UndiciResponseInterceptor`
 - `UndiciTlsOptions`, `UndiciRetryOptions`
@@ -328,7 +369,7 @@ Unit tests (see tests/*.spec.ts) cover:
 - isPlainObject exclusions (Buffer, ArrayBuffer views, URLSearchParams, streams, FormData)
 - AbortSignal creation (timeout only, user only, both, none)
 - Dispatcher selection: Agent per request when pooling disabled; per-origin Pool caching; custom dispatcher wrapped by RetryAgent; convenience HTTP methods set method
-- No double-wrapping when dispatcher is already a RetryAgent
+- No double-wrapping when the dispatcher is already a RetryAgent
 
 ### How to run tests
 
