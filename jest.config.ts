@@ -13,7 +13,6 @@ const config: Config = {
   collectCoverageFrom: [
     '<rootDir>/src/**/*.ts',
   ],
-  coveragePathIgnorePatterns: ['apps/**/main.ts'],
   detectOpenHandles: true,
   transform: {
     '^.+.tsx?$': ['ts-jest', {}],

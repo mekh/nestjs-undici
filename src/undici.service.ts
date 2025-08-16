@@ -19,6 +19,7 @@ import {
   UndiciOptionsPut,
   UndiciRequestBody,
   UndiciRequestConfig,
+  UndiciRequestOptions,
   UndiciResponse,
 } from './undici.interfaces';
 
@@ -58,55 +59,61 @@ export class UndiciService implements OnModuleDestroy {
   }
 
   async get<TBody, TRaw = Raw>(
-    url: string,
+    path: string,
     options?: UndiciOptionsGet,
   ): Promise<UndiciResponse<TBody, TRaw>> {
-    return this.request<TBody, TRaw>({ ...options, url, method: 'GET' });
+    return this.request<TBody, TRaw>({ ...options, path, method: 'GET' });
   }
 
   async post<TBody, TRaw = Raw>(
-    url: string,
+    path: string,
     body: UndiciRequestBody,
     options?: UndiciOptionsPost,
   ): Promise<UndiciResponse<TBody, TRaw>> {
-    return this.request<TBody, TRaw>({ ...options, url, method: 'POST', body });
+    return this.request<TBody, TRaw>({
+      ...options,
+      path,
+      method: 'POST',
+      body,
+    });
   }
 
   async put<TBody, TRaw = Raw>(
-    url: string,
+    path: string,
     body: UndiciRequestBody,
     options?: UndiciOptionsPut,
   ): Promise<UndiciResponse<TBody, TRaw>> {
-    return this.request<TBody, TRaw>({ ...options, url, method: 'PUT', body });
+    return this.request<TBody, TRaw>({ ...options, path, method: 'PUT', body });
   }
 
   async patch<TBody, TRaw = Raw>(
-    url: string,
+    path: string,
     body: UndiciRequestBody,
     options?: UndiciOptionsPatch,
   ): Promise<UndiciResponse<TBody, TRaw>> {
     return this.request<TBody, TRaw>({
       ...options,
-      url,
+      path,
       method: 'PATCH',
       body,
     });
   }
 
   async delete<TBody, TRaw = Raw>(
-    url: string,
+    path: string,
     options?: UndiciOptionsDelete,
   ): Promise<UndiciResponse<TBody, TRaw>> {
-    return this.request<TBody, TRaw>({ ...options, url, method: 'DELETE' });
+    return this.request<TBody, TRaw>({ ...options, path, method: 'DELETE' });
   }
 
   public async request<TBody, TRaw>(
-    config: UndiciRequestConfig,
+    options: UndiciRequestOptions,
   ): Promise<UndiciResponse<TBody, TRaw>> {
-    const reqConfig = await this.applyRequestInterceptors(config);
-    const requestUrl = this.buildUrl(reqConfig.url);
+    const url = this.buildUrl(options.path);
+    const reqConfig = await this.applyRequestInterceptors({ ...options, url });
+    const requestUrl = reqConfig.url;
     const requestHeaders = { ...reqConfig.headers };
-    const dispatcher = this.getDispatcher(requestUrl.origin, reqConfig);
+    const dispatcher = this.getDispatcher(requestUrl, reqConfig);
 
     const ct = this.getHeader(requestHeaders, 'content-type');
     const isJsonCt = !ct || this.isJsonContentType(ct);
@@ -130,7 +137,7 @@ export class UndiciService implements OnModuleDestroy {
       );
     }
 
-    const { url, timeout, tls, body, headers, ...undiciOptions } = reqConfig;
+    const { url: u, timeout, tls, body, headers, ...undiciOptions } = reqConfig;
 
     const signal = this.createAbortSignal(reqConfig);
 
@@ -194,13 +201,14 @@ export class UndiciService implements OnModuleDestroy {
    *    reuse the existing pool, ignoring their per-request tls
    */
   private getDispatcher(
-    origin: string,
+    url: URL,
     config: UndiciRequestConfig,
   ): Dispatcher | RetryAgent {
     if (!this.config.pool || this.dispatcher) {
       return this.createDispatcher(config);
     }
 
+    const origin = url.origin;
     if (this.pools.has(origin)) {
       return this.pools.get(origin)!;
     }

@@ -15,20 +15,34 @@ export type UndiciRequestBody =
 
 export type UndiciResponseBody = BodyReadable & Dispatcher.BodyMixin;
 
-export type UndiciRequestOptions<TOpaque = null> =
+type UndiciBaseRequestOptions<TOpaque = null> =
   & { dispatcher?: Dispatcher }
   & Omit<
     Dispatcher.RequestOptions<TOpaque>,
     'origin' | 'path' | 'headers' | 'body'
   >;
 
-export interface UndiciRequestConfig extends UndiciRequestOptions {
+/**
+ * Used in public methods - `get`, `post`, `put`, `patch`, `delete`.
+ */
+export interface UndiciRequestOptions extends UndiciBaseRequestOptions {
   body?: UndiciRequestBody;
   signal?: AbortSignal;
-  url: string;
+  path: string;
   headers?: Record<string, string>;
   timeout?: number;
   tls?: UndiciTlsOptions;
+}
+
+/**
+ * Used the `request` method, request interceptors, private methods.
+ */
+export interface UndiciRequestConfig extends
+  Omit<
+    UndiciRequestOptions,
+    'path'
+  > {
+  url: URL;
 }
 
 export interface UndiciSuccessRes<
@@ -168,7 +182,7 @@ export interface UndiciConfig {
   errorStrategy?: 'throw' | 'pass' | 'intercept';
 }
 
-export type UndiciOptionsGet = Omit<UndiciRequestConfig, 'method' | 'url'>;
+export type UndiciOptionsGet = Omit<UndiciRequestOptions, 'method' | 'path'>;
 export type UndiciOptionsPost = Omit<UndiciOptionsGet, 'body'>;
 export type UndiciOptionsPut = UndiciOptionsPost;
 export type UndiciOptionsPatch = UndiciOptionsPost;

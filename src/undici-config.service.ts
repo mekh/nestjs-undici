@@ -14,8 +14,5 @@ export class UndiciBaseConfig extends BaseConfig {
 
   public readonly retry = this.asBoolean('UNDICI_RAW_RETRY');
 
-  public readonly errorStrategy = this.asEnum(
-    'UNDICI_ERROR_STRATEGY',
-    ['throw', 'pass', 'intercept'],
-  );
+  public readonly errorStrategy = this.asString('UNDICI_ERROR_STRATEGY');
 }
