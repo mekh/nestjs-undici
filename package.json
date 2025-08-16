@@ -1,10 +1,10 @@
 {
   "name": "@toxicoder/nestjs-undici",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Undici module for NestJS",
   "author": "toxicoder",
   "main": "dist/index.js",
-  "types": "dist/undici.interfaces.d.ts",
+  "types": "dist/index.d.ts",
   "license": "ISC",
   "keywords": [
     "undici",
@@ -42,6 +42,9 @@
   "peerDependencies": {
     "@nestjs/common": ">= 10.0.0",
     "@nestjs/core": ">= 10.0.0"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "files": [
     "dist"
