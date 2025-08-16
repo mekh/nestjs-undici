@@ -19,9 +19,8 @@ export type UndiciRequestOptions<TOpaque = null> =
   & { dispatcher?: Dispatcher }
   & Omit<
     Dispatcher.RequestOptions<TOpaque>,
-    'origin' | 'path' | 'method' | 'headers' | 'body'
-  >
-  & Partial<Pick<Dispatcher.RequestOptions, 'method'>>;
+    'origin' | 'path' | 'headers' | 'body'
+  >;
 
 export interface UndiciRequestConfig extends UndiciRequestOptions {
   body?: UndiciRequestBody;

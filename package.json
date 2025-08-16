@@ -1,6 +1,6 @@
 {
   "name": "@toxicoder/nestjs-undici",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Undici module for NestJS",
   "author": "toxicoder",
   "main": "dist/index.js",
