@@ -189,13 +189,19 @@ export interface UndiciConfig extends UndiciBaseRequestConfig {
   /**
    * Create a per-origin pool.
    * Ignored if the `dispatcher` option is provided.
+   * The default `pool.connections` is 10.
    */
   pool?: UndiciPoolOptions | boolean;
   /**
-   * Ignored if the `dispatcher` option is provided,
-   * either on service or request level.
-   * Otherwise, a new Agent will be created (using
-   * the `tls` options, if provided) and wrapped.
+   * Ignored if the `dispatcher` option is provided, either on
+   * service or request level.
+   * Otherwise, a new Agent will be created (using the `tls` options,
+   * if provided) and wrapped.
+   * The default `retry.throwOnError` option is `false` and controlled by
+   * the `errorStrategy` option. If `true`, the Agent will throw
+   * an error if the request/connection fails (with respect
+   * to the `retry.methods`, `retry.maxRetries` and other options),
+   * no matter what the `errorStrategy` is.
    */
   retry?: UndiciRetryOptions | boolean;
 }

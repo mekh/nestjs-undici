@@ -7,6 +7,7 @@ import {
   UndiciTlsOptions,
 } from '../undici.interfaces';
 import { CustomAgent } from './custom-agent';
+import { CustomRetryAgent } from './custom-retry-agent';
 
 type Config = Pick<UndiciConfig, 'dispatcher' | 'pool' | 'retry' | 'tls'>;
 type PoolOptions = Pick<Config, 'pool'>;
@@ -77,13 +78,18 @@ export class DispatchersManager {
       return;
     }
 
-    if (dispatcher instanceof CustomAgent) {
+    if (
+      dispatcher instanceof CustomAgent ||
+      dispatcher instanceof CustomRetryAgent
+    ) {
+      console.log('Closing custom dispatcher');
       await this.close(dispatcher);
     }
   }
 
   protected async close(dispatcher?: Dispatcher): Promise<void> {
     if (dispatcher) {
+      console.log('Closing dispatcher');
       await dispatcher.close();
     }
   }
@@ -153,38 +159,61 @@ export class DispatchersManager {
     ) {
       return dispatcher;
     }
+    this.logger.debug('Wrapping dispatcher with RetryAgent');
 
     const retryOpts = this.getRetryOpts(customOpts);
 
-    return new RetryAgent(dispatcher, retryOpts);
+    return dispatcher instanceof CustomAgent
+      ? new CustomRetryAgent(dispatcher, retryOpts)
+      : new RetryAgent(dispatcher, retryOpts);
   }
 
   private getPoolOpts(
     customOpts?: PoolOptions,
   ): UndiciPoolOptions | undefined {
-    if (typeof customOpts?.pool === 'boolean') {
-      return;
+    const baseOpts: UndiciPoolOptions = {
+      connections: 10,
+    };
+
+    if (customOpts?.pool !== undefined) {
+      return {
+        ...baseOpts,
+        ...typeof customOpts.pool !== 'boolean' ? customOpts.pool : {},
+      };
     }
 
-    if (typeof this.config.pool === 'boolean') {
-      return;
+    if (this.config.pool !== undefined) {
+      return {
+        ...baseOpts,
+        ...typeof this.config.pool !== 'boolean' ? this.config.pool : {},
+      };
     }
 
-    return customOpts?.pool ?? this.config.pool;
+    return baseOpts;
   }
 
   private getRetryOpts(
     customOpts?: RetryOptions,
   ): UndiciRetryOptions | undefined {
-    if (typeof customOpts?.retry === 'boolean') {
-      return;
+    const baseOpts: UndiciRetryOptions = {
+      throwOnError: false,
+    };
+
+    if (customOpts?.retry !== undefined) {
+      return {
+        ...baseOpts,
+        ...typeof customOpts.retry !== 'boolean' ? customOpts.retry : {},
+      };
     }
 
-    if (typeof this.config.retry === 'boolean') {
-      return;
+    if (this.config.retry !== undefined) {
+      return {
+        ...baseOpts,
+        ...typeof this.config.retry !== 'boolean' ? this.config.retry : {},
+      };
     }
 
-    return customOpts?.retry ?? this.config.retry;
+    return baseOpts;
   }
 
   private getTlsOpts(

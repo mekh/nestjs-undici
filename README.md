@@ -36,7 +36,6 @@ A lightweight NestJS library built on top of the undici HTTP client. It provides
   - [What is covered by unit tests](#what-is-covered-by-unit-tests)
   - [How to run tests](#how-to-run-tests)
 - [Troubleshooting and best practices](#troubleshooting-and-best-practices)
-- [Changelog](#changelog)
 - [License](#license)
 
 ## Quick overview
@@ -205,6 +204,8 @@ Notes:
 
 - UndiciBaseConfig (extends BaseConfig) maps string envs to typed values using `asString`, `asNumber`, `asBoolean`, `asEnum`.
 - When an env var is missing, the respective option is undefined and normal defaults apply (e.g., `parse` defaults to true at runtime unless overridden).
+- If pooling is enabled without explicit options (either via env or code), the pool uses `{ connections: 10 }` by default.
+- If retry is enabled without explicit options (either via env or code), it uses `{ throwOnError: false }` by default. Set `throwOnError: true` to force throwing regardless of `errorStrategy`.
 
 ### Pooling and dispatcher
 
@@ -213,7 +214,7 @@ Dispatcher selection logic inside the service:
 - If a custom `dispatcher` is provided in the service config (module options), it is always used and will be wrapped by `RetryAgent` when `retry` is enabled.
 - If a custom `dispatcher` is provided per request (via request options), it is used as-is and is not wrapped. You are responsible for its lifecycle.
 - If `pool` is `false`, a new `Agent` is created per request (no connection reuse). This is useful when connecting to the same origin with different TLS configs or when avoiding persistent connections. These transient Agents are automatically closed after the request completes.
-- If `pool` is `true`, a `Pool` is created and cached per origin. The TLS config used for the first request to an origin is reused for subsequent requests to the same origin.
+- If `pool` is `true`, a `Pool` is created and cached per origin. The TLS config used for the first request to an origin is reused for subsequent requests to the same origin. When pooling is enabled but you don't provide explicit pool options, the default is `{ connections: 10 }`.
 - On module destroy, the service-level dispatcher and all created pools are closed. Per-request custom dispatchers are not closed by the service.
 
 ### Retry
@@ -223,6 +224,13 @@ Set `retry` to:
 - `true` to enable undici's `RetryAgent` with default retry options
 - a concrete `UndiciRetryOptions` object to configure retries
 - `false` (default) to disable retry wrapping
+
+Defaults and behavior:
+
+- When `retry` is enabled without explicit options, the default is `{ throwOnError: false }`.
+- When `throwOnError` is `false`, whether an error is thrown or handled depends on your `errorStrategy` (see below).
+- When `throwOnError` is `true`, the retry agent will throw on request/connection failure regardless of the configured `errorStrategy`.
+- Providing a custom dispatcher per request bypasses retry wrapping for that request.
 
 ### TLS
 
@@ -434,11 +442,6 @@ Jest config: `jest.config.ts` (rootDir='./', testMatch='<rootDir>/tests/*.spec.t
 - Error strategy `intercept`: Ensure at least one response interceptor is configured; otherwise the error will be thrown.
 - Retries: When enabling `retry`, configure it appropriately to avoid retry storms.
 - Shutdown: If you create long-lived pools/dispatchers, ensure `onModuleDestroy` is called (Nest will do this on application shutdown) to close connections.
-
-## Changelog
-
-- 0.0.2: Refactored interceptors into classes (`src/interceptors`). Added runtime management via `UndiciService.interceptors` (`add`/`remove`). Changed per-request interceptors to replace, not append, the global pipeline. Updated tests and docs.
-- 0.0.1: Initial implementation and test suite.
 
 ## License
 
