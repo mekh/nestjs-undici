@@ -5,6 +5,8 @@ import { DispatchersManager } from './services';
 
 import { UNDICI_CLIENT_OPTIONS } from './undici.constants';
 import {
+  Exact,
+  UndiciBaseRequestOptions,
   UndiciConfig,
   UndiciOptionsDelete,
   UndiciOptionsGet,
@@ -19,6 +21,9 @@ import {
 import * as utils from './utils';
 
 type Raw = string | Buffer | ArrayBuffer;
+
+const CONTENT_TYPE_HEADER = 'content-type';
+const CONTENT_TYPE_JSON = 'application/json';
 
 @Injectable()
 export class UndiciService implements OnModuleDestroy {
@@ -96,26 +101,79 @@ export class UndiciService implements OnModuleDestroy {
   ): Promise<UndiciResponse<TBody, TRaw>> {
     const { path, ...opts } = options;
 
-    const reqConfig = await this.applyRequestInterceptors({
+    const reqConfig = await this.interceptors.request.apply({
       ...opts,
       url: this.buildUrl(options.path),
     });
 
     const requestUrl = reqConfig.url;
+    const {
+      body: requestBody,
+      headers: requestHeaders,
+    } = this.createBodyAndHeaders(reqConfig);
+
+    const signal = this.createAbortSignal(reqConfig);
+    const dispatcher = this.dispatchers.getDispatcher(
+      reqConfig.url.origin,
+      reqConfig,
+    );
+    const requestOptions = this.cleanupConfig(reqConfig);
+
+    let res: Dispatcher.ResponseData;
+    try {
+      res = await request(requestUrl, {
+        ...requestOptions,
+        body: requestBody,
+        headers: requestHeaders,
+        dispatcher,
+        signal,
+      });
+    } finally {
+      await this.dispatchers.closeIfCustom(dispatcher);
+    }
+
+    return this.handleResponse<TBody, TRaw>(res, reqConfig);
+  }
+
+  private cleanupConfig(
+    reqConfig: UndiciRequestConfig,
+  ): Exact<UndiciRequestConfig, UndiciBaseRequestOptions> {
+    const {
+      url,
+      timeout,
+      responseInterceptors,
+      requestInterceptors,
+      dispatcher,
+      rawBody,
+      parse,
+      tls,
+      errorStrategy,
+      body,
+      headers,
+      ...undiciOptions
+    } = reqConfig;
+
+    return undiciOptions;
+  }
+
+  private createBodyAndHeaders(reqConfig: UndiciRequestConfig): {
+    body: Exclude<UndiciRequestBody, Record<string, any>> | undefined;
+    headers: Record<string, string>;
+  } {
     const requestHeaders = { ...reqConfig.headers };
 
-    const ct = this.getHeader(requestHeaders, 'content-type');
+    const ct = this.getHeader(requestHeaders, CONTENT_TYPE_HEADER);
     const isJsonCt = !ct || this.isJsonContentType(ct);
 
     let requestBody = reqConfig.body;
-    if (isJsonCt && this.isPlainObject(requestBody)) {
+    if (isJsonCt && utils.isPlainObject(requestBody)) {
       requestBody = JSON.stringify(requestBody);
       if (!ct) {
-        requestHeaders['content-type'] = 'application/json';
+        requestHeaders[CONTENT_TYPE_HEADER] = CONTENT_TYPE_JSON;
       }
     }
 
-    if (this.isPlainObject(requestBody)) {
+    if (utils.isPlainObject(requestBody)) {
       throw new Error(
         [
           'Request body must be a string or a Buffer.',
@@ -126,25 +184,7 @@ export class UndiciService implements OnModuleDestroy {
       );
     }
 
-    const { url, timeout, tls, body, headers, ...undiciOptions } = reqConfig;
-
-    const signal = this.createAbortSignal(reqConfig);
-    const dispatcher = this.dispatchers.getDispatcher(url.origin, reqConfig);
-
-    let res: Dispatcher.ResponseData;
-    try {
-      res = await request(requestUrl, {
-        ...undiciOptions,
-        body: requestBody,
-        headers: requestHeaders,
-        dispatcher,
-        signal,
-      });
-    } finally {
-      await this.dispatchers.closeCustom(dispatcher);
-    }
-
-    return this.handleResponse<TBody, TRaw>(res, reqConfig);
+    return { body: requestBody, headers: requestHeaders };
   }
 
   private createAbortSignal(
@@ -236,7 +276,7 @@ export class UndiciService implements OnModuleDestroy {
       error.body = rawBody;
     }
 
-    return this.applyResponseInterceptors<UndiciResponse<TBody, TRaw>>(
+    return this.interceptors.response.apply<UndiciResponse<TBody, TRaw>>(
       {
         ...response,
         rawBody: includeRawBody ? rawBody : null,
@@ -261,7 +301,7 @@ export class UndiciService implements OnModuleDestroy {
       return { body: null, rawBody: null };
     }
 
-    const ct = this.getHeader(res.headers, 'content-type');
+    const ct = this.getHeader(res.headers, CONTENT_TYPE_HEADER);
     const isJson = this.isJsonContentType(ct);
     const isText = ct?.startsWith('text/');
 
@@ -301,7 +341,7 @@ export class UndiciService implements OnModuleDestroy {
     const ct = ctHeader?.split(';')[0].trim().toLowerCase();
 
     /** Treat application/*+json as JSON as well */
-    return ct === 'application/json' || !!ct?.endsWith('+json');
+    return ct === CONTENT_TYPE_JSON || !!ct?.endsWith('+json');
   }
 
   private getHeader(
@@ -316,23 +356,5 @@ export class UndiciService implements OnModuleDestroy {
       ];
 
     return Array.isArray(val) ? val[0] : val;
-  }
-
-  private async applyRequestInterceptors(
-    config: UndiciRequestConfig,
-  ): Promise<UndiciRequestConfig> {
-    return this.interceptors.request.apply(config);
-  }
-
-  private async applyResponseInterceptors<T>(
-    response: UndiciResponse<any>,
-    reqConfig: UndiciRequestConfig,
-    error?: any,
-  ): Promise<T> {
-    return this.interceptors.response.apply(response, reqConfig, error);
-  }
-
-  private isPlainObject(obj: unknown): obj is Record<string, any> {
-    return utils.isPlainObject(obj);
   }
 }

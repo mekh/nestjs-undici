@@ -72,7 +72,7 @@ export class DispatchersManager {
     this.logger.log('All connections closed.');
   }
 
-  public async closeCustom(dispatcher?: Dispatcher): Promise<void> {
+  public async closeIfCustom(dispatcher?: Dispatcher): Promise<void> {
     if (!dispatcher) {
       return;
     }

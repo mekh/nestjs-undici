@@ -17,12 +17,18 @@ export type UndiciRequestBody =
 
 export type UndiciResponseBody = BodyReadable & Dispatcher.BodyMixin;
 
-type UndiciBaseRequestOptions<TOpaque = null> =
+export type UndiciBaseRequestOptions<TOpaque = null> =
   & { dispatcher?: Dispatcher }
   & Omit<
     Dispatcher.RequestOptions<TOpaque>,
     'origin' | 'path' | 'headers' | 'body'
   >;
+
+export type Exact<T, Shape> =
+  & Pick<T, Extract<keyof T, keyof Shape>>
+  & {
+    [K in Exclude<keyof T, keyof Shape>]?: never;
+  };
 
 interface UndiciBaseRequestConfig {
   /**
