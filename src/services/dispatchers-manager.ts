@@ -1,11 +1,12 @@
 import { Logger } from '@nestjs/common';
-import { Agent, Dispatcher, Pool, RetryAgent } from 'undici';
+import { Dispatcher, Pool, RetryAgent } from 'undici';
 import {
   UndiciConfig,
   UndiciPoolOptions,
   UndiciRetryOptions,
   UndiciTlsOptions,
 } from '../undici.interfaces';
+import { CustomAgent } from './custom-agent';
 
 type Config = Pick<UndiciConfig, 'dispatcher' | 'pool' | 'retry' | 'tls'>;
 type PoolOptions = Pick<Config, 'pool'>;
@@ -16,8 +17,6 @@ export class DispatchersManager {
   private readonly logger = new Logger(DispatchersManager.name);
 
   private readonly pools = new Map<string, Dispatcher>();
-
-  private readonly customDispatchers = new WeakMap<Dispatcher>();
 
   private readonly dispatcher?: Dispatcher;
 
@@ -78,8 +77,7 @@ export class DispatchersManager {
       return;
     }
 
-    if (this.customDispatchers.has(dispatcher)) {
-      this.customDispatchers.delete(dispatcher);
+    if (dispatcher instanceof CustomAgent) {
       await this.close(dispatcher);
     }
   }
@@ -91,35 +89,32 @@ export class DispatchersManager {
   }
 
   /**
-   * Creates a new Agent without storing it globally unless a custom dispatcher
-   * was set in the constructor.
+   * Creates a new CustomAgent without storing it globally
+   * unless a custom dispatcher was set in the constructor.
    *
    * Important: When `pool = false` and no custom dispatcher is set, this will
-   * create a fresh Agent on every call. This ensures that no TCP/TLS session
-   * state is shared between requests, which can be critical when:
+   * create a fresh CustomAgent on every call. This ensures that
+   * no TCP/TLS session state is shared between requests, which can be
+   * critical when:
    * - Connecting to the same host with different TLS certificates/SNI.
    * - Avoiding persistent connections for security-sensitive endpoints.
    */
   protected createDispatcher(
     config?: Pick<Config, 'tls' | 'retry'>,
   ): Dispatcher | undefined {
-    // if (
-    //   !config?.tls &&
-    //   !config?.retry &&
-    //   !this.config.tls &&
-    //   !this.config.retry
-    // ) {
-    //   return;
-    // }
+    if (
+      !config?.tls &&
+      !config?.retry &&
+      !this.config.tls &&
+      !this.config.retry
+    ) {
+      return;
+    }
 
-    const dispatcher = this.wrapDispatcher(
-      new Agent({ connect: this.getTlsOpts(config) }),
+    return this.wrapDispatcher(
+      new CustomAgent({ connect: this.getTlsOpts(config) }),
       config,
     );
-
-    this.customDispatchers.set(dispatcher, true);
-
-    return dispatcher;
   }
 
   protected getOrCreatePool(

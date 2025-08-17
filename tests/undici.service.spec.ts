@@ -255,26 +255,23 @@ describe('UndiciService', () => {
     await expect(service.get('/bad-json')).rejects.toThrow();
   });
 
-  it(
-    'errorStrategy: default throw consumes error body and throws',
-    async () => {
-      const moduleRef = await createModule();
-      const service = moduleRef.get(UndiciService);
+  it('errorStrategy: default throw consumes error body and throws', async () => {
+    const moduleRef = await createModule();
+    const service = moduleRef.get(UndiciService);
 
-      request.setNextResponse(
-        makeResponse({
-          statusCode: 500,
-          headers: { 'content-type': 'text/plain' },
-          body: new MockBody({ text: 'oops' }),
-        }),
-      );
-
-      await expect(service.get('/err')).rejects.toMatchObject({
-        name: 'ResponseStatusCodeError',
+    request.setNextResponse(
+      makeResponse({
         statusCode: 500,
-      });
-    },
-  );
+        headers: { 'content-type': 'text/plain' },
+        body: new MockBody({ text: 'oops' }),
+      }),
+    );
+
+    await expect(service.get('/err')).rejects.toMatchObject({
+      name: 'ResponseStatusCodeError',
+      statusCode: 500,
+    });
+  });
 
   it('errorStrategy: pass returns response with error', async () => {
     const moduleRef = await createModule({
@@ -392,27 +389,23 @@ describe('UndiciService', () => {
     expect(res.body).toBe('ok');
   });
 
-  it(
-    'isPlainObject ignores Buffer, ArrayBuffer views, ' +
-      'URLSearchParams, streams, FormData',
-    async () => {
-      const moduleRef = await createModule();
-      const service = moduleRef.get(UndiciService);
+  it('isPlainObject ignores Buffer, ArrayBuffer views, URLSearchParams, streams, FormData', async () => {
+    const moduleRef = await createModule();
+    const service = moduleRef.get(UndiciService);
 
-      request.setNextResponse(makeResponse());
+    request.setNextResponse(makeResponse());
 
-      await service.post('/buf', Buffer.from('x'));
-      await service.post('/u8', new Uint8Array([1, 2]));
-      await service.post('/sp', new URLSearchParams('a=1'));
-      await service.post('/fd', new FormData());
+    await service.post('/buf', Buffer.from('x'));
+    await service.post('/u8', new Uint8Array([1, 2]));
+    await service.post('/sp', new URLSearchParams('a=1'));
+    await service.post('/fd', new FormData());
 
-      const streamLike: any = { pipe: () => {} };
-      await service.post('/stream', streamLike);
+    const streamLike: any = { pipe: () => {} };
+    await service.post('/stream', streamLike);
 
-      // Make sure there were 5 calls
-      expect(mockRequests.length).toBe(5);
-    },
-  );
+    // Make sure there were 5 calls
+    expect(mockRequests.length).toBe(5);
+  });
 
   it('createAbortSignal covers timeout only', async () => {
     const moduleRef = await createModule({ timeout: undefined });
@@ -452,65 +445,65 @@ describe('UndiciService', () => {
     expect(mockRequests.pop()?.options.signal).toBeUndefined();
   });
 
-  it(
-    'dispatcher selection: no pool creates Agent per request and closes it; ' +
-      'retry off',
-    async () => {
-      const moduleRef = await createModule({ pool: false, retry: false });
-      const service = moduleRef.get(UndiciService);
+  it('dispatcher selection: no pool creates Agent per request and closes it; retry off', async () => {
+    const moduleRef = await createModule({ pool: false, retry: false });
+    const service = moduleRef.get(UndiciService);
 
-      request.setNextResponse(makeResponse());
-      await service.get('https://host/a');
+    request.setNextResponse(makeResponse());
+    await service.get('https://host/a', { tls: { ca: 'ca' } });
 
-      const { dispatcher } = mockRequests[0].options;
+    const { dispatcher } = mockRequests[0].options;
 
-      expect(dispatcher).toBeInstanceOf(Agent);
-      expect(dispatcher.closed).toBe(true);
-    },
-  );
+    expect(dispatcher).toBeInstanceOf(Agent);
+    expect(dispatcher.closed).toBe(true);
+  });
 
-  it(
-    'dispatcher selection: pool true caches ' +
-      'Pool per origin and applies tls/connect options',
-    async () => {
-      const moduleRef = await createModule({ pool: true });
-      const service = moduleRef.get(UndiciService);
+  it('dispatcher selection: no Agent should be created if no tls and retry options are passed', async () => {
+    const moduleRef = await createModule({ pool: false, retry: false });
+    const service = moduleRef.get(UndiciService);
 
-      request.setNextResponse(makeResponse());
-      await service.get('https://o/a');
+    request.setNextResponse(makeResponse());
+    await service.get('https://host/a');
 
-      request.setNextResponse(makeResponse());
-      await service.get('https://o/b');
+    const { dispatcher } = mockRequests[0].options;
 
-      expect(Pool.created.length).toBe(1);
+    expect(dispatcher).not.toBeInstanceOf(Agent);
+  });
 
-      await service.onModuleDestroy();
-      const pools = getPoolInstances();
-      expect(pools[0].closed).toBe(true);
-    },
-  );
+  it('dispatcher selection: pool true caches Pool per origin and applies tls/connect options', async () => {
+    const moduleRef = await createModule({ pool: true });
+    const service = moduleRef.get(UndiciService);
 
-  it(
-    'dispatcher selection: custom dispatcher is wrapped ' +
-      'by RetryAgent when retry enabled and closed on destroy',
-    async () => {
-      const dispatcher = new Agent();
-      const moduleRef = await createModule({
-        dispatcher: dispatcher as any,
-        retry: { retries: 1 } as any,
-      });
-      const service = moduleRef.get(UndiciService);
+    request.setNextResponse(makeResponse());
+    await service.get('https://o/a');
 
-      request.setNextResponse(makeResponse());
-      await service.get('https://x/a');
+    request.setNextResponse(makeResponse());
+    await service.get('https://o/b');
 
-      const { dispatcher: disp } = mockRequests[0].options;
-      expect(disp).toBeInstanceOf(RetryAgent);
+    expect(Pool.created.length).toBe(1);
 
-      await service.onModuleDestroy();
-      expect(disp.closed).toBe(true);
-    },
-  );
+    await service.onModuleDestroy();
+    const pools = getPoolInstances();
+    expect(pools[0].closed).toBe(true);
+  });
+
+  it('dispatcher selection: custom dispatcher is wrapped by RetryAgent when retry enabled and closed on destroy', async () => {
+    const dispatcher = new Agent();
+    const moduleRef = await createModule({
+      dispatcher: dispatcher as any,
+      retry: { retries: 1 } as any,
+    });
+    const service = moduleRef.get(UndiciService);
+
+    request.setNextResponse(makeResponse());
+    await service.get('https://x/a');
+
+    const { dispatcher: disp } = mockRequests[0].options;
+    expect(disp).toBeInstanceOf(RetryAgent);
+
+    await service.onModuleDestroy();
+    expect(disp.closed).toBe(true);
+  });
 
   it('convenience methods set proper HTTP method', async () => {
     const moduleRef = await createModule();
@@ -537,27 +530,24 @@ describe('UndiciService', () => {
     expect(mockRequests[4].options.method).toBe('POST');
   });
 
-  it(
-    'wrapDispatcher does not double-wrap when dispatcher is already RetryAgent',
-    async () => {
-      const base = new Agent();
-      const wrapped = new RetryAgent(base as any, { retries: 3 } as any);
-      const moduleRef = await createModule({
-        dispatcher: wrapped as any,
-        retry: true,
-      });
-      const service = moduleRef.get(UndiciService);
+  it('wrapDispatcher does not double-wrap when dispatcher is already RetryAgent', async () => {
+    const base = new Agent();
+    const wrapped = new RetryAgent(base as any, { retries: 3 } as any);
+    const moduleRef = await createModule({
+      dispatcher: wrapped as any,
+      retry: true,
+    });
+    const service = moduleRef.get(UndiciService);
 
-      request.setNextResponse(makeResponse());
-      await service.get('https://y/a');
+    request.setNextResponse(makeResponse());
+    await service.get('https://y/a');
 
-      const dispUsed = (mockRequests[0].options as any).dispatcher;
-      expect(dispUsed).toBe(wrapped);
+    const dispUsed = (mockRequests[0].options as any).dispatcher;
+    expect(dispUsed).toBe(wrapped);
 
-      await service.onModuleDestroy();
-      expect((wrapped as any).closed).toBe(true);
-    },
-  );
+    await service.onModuleDestroy();
+    expect((wrapped as any).closed).toBe(true);
+  });
 
   it('json content with only whitespace yields body null and rawBody text', async () => {
     const moduleRef = await createModule({ rawBody: true });
