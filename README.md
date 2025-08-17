@@ -9,6 +9,7 @@ A lightweight NestJS library built on top of the undici HTTP client. It provides
 - Error handling strategies: throw | pass | intercept
 - Connection pooling per origin, optional retry, and TLS configuration
 - Graceful shutdown: closes dispatcher and connection pools on module destroy
+- When pooling is disabled and no custom dispatcher is provided, per-request Agents are created and automatically closed after the request finishes
 
 ## Table of contents
 
@@ -211,7 +212,7 @@ Dispatcher selection logic inside the service:
 
 - If a custom `dispatcher` is provided in the service config (module options), it is always used and will be wrapped by `RetryAgent` when `retry` is enabled.
 - If a custom `dispatcher` is provided per request (via request options), it is used as-is and is not wrapped. You are responsible for its lifecycle.
-- If `pool` is `false`, a new `Agent` is created per request (no connection reuse). This is useful when connecting to the same origin with different TLS configs or when avoiding persistent connections.
+- If `pool` is `false`, a new `Agent` is created per request (no connection reuse). This is useful when connecting to the same origin with different TLS configs or when avoiding persistent connections. These transient Agents are automatically closed after the request completes.
 - If `pool` is `true`, a `Pool` is created and cached per origin. The TLS config used for the first request to an origin is reused for subsequent requests to the same origin.
 - On module destroy, the service-level dispatcher and all created pools are closed. Per-request custom dispatchers are not closed by the service.
 

@@ -4,6 +4,8 @@ import { Dispatcher, FormData, Pool, RetryHandler } from 'undici';
 import BodyReadable from 'undici/types/readable';
 
 export type UndiciRetryOptions = RetryHandler.RetryOptions;
+export type UndiciPoolOptions = Pool.Options;
+
 export type UndiciRequestBody =
   | string
   | Buffer
@@ -182,7 +184,7 @@ export interface UndiciConfig extends UndiciBaseRequestConfig {
    * Create a per-origin pool.
    * Ignored if the `dispatcher` option is provided.
    */
-  pool?: Omit<Pool.Options, 'connections'> & { connections?: number } | boolean;
+  pool?: UndiciPoolOptions | boolean;
   /**
    * Ignored if the `dispatcher` option is provided,
    * either on service or request level.

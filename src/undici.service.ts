@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
-import { Agent, Dispatcher, Pool, RetryAgent, errors, request } from 'undici';
+import { Dispatcher, errors, request } from 'undici';
 import { Interceptors } from './interceptors';
+import { DispatchersManager } from './services';
 
 import { UNDICI_CLIENT_OPTIONS } from './undici.constants';
 import {
@@ -23,11 +24,9 @@ type Raw = string | Buffer | ArrayBuffer;
 export class UndiciService implements OnModuleDestroy {
   private readonly logger = new Logger(UndiciService.name);
 
-  private readonly pools = new Map<string, Dispatcher>();
-
-  private readonly dispatcher?: Dispatcher;
-
   public readonly interceptors: Interceptors;
+
+  public readonly dispatchers: DispatchersManager;
 
   constructor(
     @Inject(UNDICI_CLIENT_OPTIONS) private readonly config: UndiciConfig,
@@ -37,26 +36,11 @@ export class UndiciService implements OnModuleDestroy {
       this.config.responseInterceptors,
     );
 
-    if (this.config.dispatcher) {
-      this.dispatcher = this.wrapDispatcher(this.config.dispatcher);
-    }
+    this.dispatchers = new DispatchersManager(this.config);
   }
 
   async onModuleDestroy(): Promise<void> {
-    this.logger.log('Closing all connections...');
-    if (this.dispatcher) {
-      await this.dispatcher.close();
-    }
-
-    await Promise.all(
-      [...this.pools.values()].map((pool) => {
-        pool.close().catch((e) => {
-          this.logger.debug('Failed to close connection pool', e);
-        });
-      }),
-    );
-
-    this.logger.log('All connections closed.');
+    await this.dispatchers.closeAll();
   }
 
   async get<TBody, TRaw = Raw>(
@@ -145,7 +129,7 @@ export class UndiciService implements OnModuleDestroy {
     const { url, timeout, tls, body, headers, ...undiciOptions } = reqConfig;
 
     const signal = this.createAbortSignal(reqConfig);
-    const dispatcher = this.getDispatcher(reqConfig);
+    const dispatcher = this.dispatchers.getDispatcher(url.origin, reqConfig);
 
     let res: Dispatcher.ResponseData;
     try {
@@ -157,12 +141,7 @@ export class UndiciService implements OnModuleDestroy {
         signal,
       });
     } finally {
-      /** Close only if it's a dispatcher created by this service.*/
-      if (!reqConfig.dispatcher && dispatcher) {
-        if (!this.config.pool && !this.dispatcher) {
-          await dispatcher.close();
-        }
-      }
+      await this.dispatchers.closeCustom(dispatcher);
     }
 
     return this.handleResponse<TBody, TRaw>(res, reqConfig);
@@ -186,85 +165,6 @@ export class UndiciService implements OnModuleDestroy {
     return signals.length === 1
       ? signals[0]
       : AbortSignal.any(signals);
-  }
-
-  /**
-   * Dispatcher selection logic:
-   * 1. If a custom dispatcher was provided via constructor (`this.dispatcher`),
-   *    always use it.
-   * 2. If pooling is disabled (`config.pool = false`), create a new Agent
-   *    for each request unless a custom dispatcher is set.
-   *    This is useful when the same origin needs to be accessed with different
-   *    TLS configurations or when you explicitly want to avoid connection
-   *    reuse.
-   * 3. If pooling is enabled (`config.pool = true`), reuse a Pool per origin
-   *    to take advantage of TCP connection reuse.
-   *    Please note that pools are cached by origin and created only once
-   *    per origin using the TLS config from the first request to that origin.
-   *    Subsequent requests to the same origin with different TLS settings will
-   *    reuse the existing pool, ignoring their per-request tls
-   */
-  private getDispatcher(config: UndiciRequestConfig): Dispatcher | RetryAgent {
-    if (config.dispatcher) {
-      return config.dispatcher;
-    }
-
-    if (!this.config.pool || this.dispatcher) {
-      return this.createDispatcher(config);
-    }
-
-    const origin = config.url.origin;
-    if (this.pools.has(origin)) {
-      return this.pools.get(origin)!;
-    }
-
-    const poolOptions = typeof this.config.pool === 'boolean'
-      ? {}
-      : this.config.pool;
-
-    this.logger.debug(`Creating new connection pool for origin: ${origin}`);
-    const pool: Dispatcher = this.wrapDispatcher(
-      new Pool(origin, {
-        ...poolOptions,
-        connect: config.tls ?? this.config.tls,
-      }),
-    );
-
-    this.pools.set(origin, pool);
-
-    return pool;
-  }
-
-  /**
-   * Creates a new Agent without storing it globally unless a custom dispatcher
-   * was set in the constructor.
-   *
-   * Important: When `pool = false` and no custom dispatcher is set, this will
-   * create a fresh Agent on every call. This ensures that no TCP/TLS session
-   * state is shared between requests, which can be critical when:
-   * - Connecting to the same host with different TLS certificates/SNI.
-   * - Avoiding persistent connections for security-sensitive endpoints.
-   */
-  private createDispatcher(config: UndiciRequestConfig): Dispatcher {
-    if (this.dispatcher) {
-      return this.dispatcher;
-    }
-
-    return this.wrapDispatcher(
-      new Agent({ connect: config.tls ?? this.config.tls }),
-    );
-  }
-
-  private wrapDispatcher(dispatcher: Dispatcher): Dispatcher {
-    if (dispatcher instanceof RetryAgent || !this.config.retry) {
-      return dispatcher;
-    }
-
-    const retryOptions = typeof this.config.retry === 'boolean'
-      ? {}
-      : this.config.retry;
-
-    return new RetryAgent(dispatcher, retryOptions);
   }
 
   private buildUrl(path: string): URL {

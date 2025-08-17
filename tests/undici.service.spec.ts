@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access,max-len */
 import { Test, TestingModule } from '@nestjs/testing';
 
 jest.mock('undici', () => require('./__helpers__/undici-mock'));
@@ -589,7 +589,8 @@ describe('UndiciService', () => {
       throw new Error('close failed');
     }) as any;
 
-    const debugSpy = jest.spyOn(service.logger, 'debug').mockImplementation();
+    const debugSpy = jest.spyOn(service.dispatchers.logger, 'debug')
+      .mockImplementation();
 
     await service.onModuleDestroy();
 
@@ -633,8 +634,8 @@ describe('UndiciService', () => {
 
   it('applyRequestInterceptors shallowCopy does not clone non-plain body', async () => {
     const buffer = Buffer.from('data');
-    const i1 = async (cfg: any) => ({ ...cfg, body: buffer });
-    const i2 = async (cfg: any) => {
+    const i1 = async (cfg: any): Promise<any> => ({ ...cfg, body: buffer });
+    const i2 = async (cfg: any): Promise<any> => {
       expect(cfg.body).toBe(buffer);
       return cfg;
     };
