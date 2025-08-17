@@ -119,8 +119,6 @@ export class UndiciService implements OnModuleDestroy {
 
     const requestUrl = reqConfig.url;
     const requestHeaders = { ...reqConfig.headers };
-    const dispatcher = reqConfig.dispatcher ??
-      this.getDispatcher(requestUrl, reqConfig);
 
     const ct = this.getHeader(requestHeaders, 'content-type');
     const isJsonCt = !ct || this.isJsonContentType(ct);
@@ -147,6 +145,7 @@ export class UndiciService implements OnModuleDestroy {
     const { url, timeout, tls, body, headers, ...undiciOptions } = reqConfig;
 
     const signal = this.createAbortSignal(reqConfig);
+    const dispatcher = this.getDispatcher(reqConfig);
 
     let res: Dispatcher.ResponseData;
     try {
@@ -205,15 +204,16 @@ export class UndiciService implements OnModuleDestroy {
    *    Subsequent requests to the same origin with different TLS settings will
    *    reuse the existing pool, ignoring their per-request tls
    */
-  private getDispatcher(
-    url: URL,
-    config: UndiciRequestConfig,
-  ): Dispatcher | RetryAgent {
+  private getDispatcher(config: UndiciRequestConfig): Dispatcher | RetryAgent {
+    if (config.dispatcher) {
+      return config.dispatcher;
+    }
+
     if (!this.config.pool || this.dispatcher) {
       return this.createDispatcher(config);
     }
 
-    const origin = url.origin;
+    const origin = config.url.origin;
     if (this.pools.has(origin)) {
       return this.pools.get(origin)!;
     }
