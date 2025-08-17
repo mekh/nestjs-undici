@@ -1,13 +1,6 @@
 import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
-import {
-  Agent,
-  Dispatcher,
-  FormData,
-  Pool,
-  RetryAgent,
-  errors,
-  request,
-} from 'undici';
+import { Agent, Dispatcher, Pool, RetryAgent, errors, request } from 'undici';
+import { Interceptors } from './interceptors';
 
 import { UNDICI_CLIENT_OPTIONS } from './undici.constants';
 import {
@@ -22,6 +15,7 @@ import {
   UndiciRequestOptions,
   UndiciResponse,
 } from './undici.interfaces';
+import * as utils from './utils';
 
 type Raw = string | Buffer | ArrayBuffer;
 
@@ -33,9 +27,16 @@ export class UndiciService implements OnModuleDestroy {
 
   private readonly dispatcher?: Dispatcher;
 
+  public readonly interceptors: Interceptors;
+
   constructor(
     @Inject(UNDICI_CLIENT_OPTIONS) private readonly config: UndiciConfig,
   ) {
+    this.interceptors = Interceptors.create(
+      this.config.requestInterceptors,
+      this.config.responseInterceptors,
+    );
+
     if (this.config.dispatcher) {
       this.dispatcher = this.wrapDispatcher(this.config.dispatcher);
     }
@@ -288,8 +289,8 @@ export class UndiciService implements OnModuleDestroy {
     reqConfig: UndiciRequestConfig,
   ): Promise<UndiciResponse<TBody, TRaw>> {
     const { statusCode, headers } = response;
-    const interceptors = this.config.responseInterceptors ?? [];
-    const hasInterceptors = interceptors.length > 0;
+    const hasInterceptors = !!reqConfig.responseInterceptors?.length ||
+      !!this.interceptors.response.length;
     const includeRawBody = reqConfig.rawBody ?? this.config.rawBody;
 
     let errorStrategy = reqConfig.errorStrategy ?? this.config.errorStrategy;
@@ -420,25 +421,7 @@ export class UndiciService implements OnModuleDestroy {
   private async applyRequestInterceptors(
     config: UndiciRequestConfig,
   ): Promise<UndiciRequestConfig> {
-    let res = config;
-    const interceptors = config.requestInterceptors ??
-      this.config.requestInterceptors ?? [];
-
-    const shallowCopy = <T extends UndiciRequestConfig>(reqConfig: T): T => {
-      const headers = { ...res.headers };
-      const query = { ...res.query };
-      const body = this.isPlainObject(reqConfig.body)
-        ? { ...reqConfig.body }
-        : reqConfig.body;
-
-      return { ...reqConfig, headers, query, body };
-    };
-
-    for (const interceptor of interceptors) {
-      res = await interceptor(shallowCopy(res));
-    }
-
-    return res;
+    return this.interceptors.request.apply(config);
   }
 
   private async applyResponseInterceptors<T>(
@@ -446,26 +429,10 @@ export class UndiciService implements OnModuleDestroy {
     reqConfig: UndiciRequestConfig,
     error?: any,
   ): Promise<T> {
-    let res = response;
-    const interceptors = reqConfig.responseInterceptors ??
-      this.config.responseInterceptors ?? [];
-
-    for (const interceptor of interceptors) {
-      res = await interceptor(res, error);
-    }
-
-    return res as T;
+    return this.interceptors.response.apply(response, reqConfig, error);
   }
 
   private isPlainObject(obj: unknown): obj is Record<string, any> {
-    return !!obj &&
-      typeof obj === 'object' &&
-      !Buffer.isBuffer(obj) &&
-      !(obj instanceof ArrayBuffer) &&
-      !ArrayBuffer.isView(obj) &&
-      !(obj instanceof URLSearchParams) &&
-      !(obj instanceof Blob) &&
-      !(typeof (obj as { pipe: any })?.pipe === 'function') &&
-      !(obj instanceof FormData);
+    return utils.isPlainObject(obj);
   }
 }

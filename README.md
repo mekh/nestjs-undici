@@ -261,15 +261,16 @@ You can set the error strategy globally via module config or per-request via `er
 
 ### Interceptors
 
-You can register interceptors globally (in module config) or per request (via request options).
+You can register interceptors globally (via module config) and manage them at runtime, or provide per-request interceptors in request options.
 
-- Request interceptors: `UndiciRequestInterceptor` receive a shallow copy of the config allowing safe mutation without leaking changes across interceptors.
-- Response interceptors: `UndiciResponseInterceptor` run in order and can transform the response and/or inspect the error.
+- Request interceptors: `UndiciRequestInterceptor` receive a shallow copy of the request config (headers, query, and plain-object body are shallow-cloned per interceptor) allowing safe mutation without leaking changes across interceptors. Non-plain bodies (Buffer, ArrayBuffer, TypedArray, URLSearchParams, FormData, stream-like) are kept by reference.
+- Response interceptors: `UndiciResponseInterceptor` run in order and can transform the response and/or inspect the error. They receive the parsed body when `parse: true` is enabled, otherwise the raw stream.
+- You can add and remove interceptors at runtime via the `UndiciService.interceptors` API.
+- Per-request interceptors replace the global pipeline for that request.
 
-Examples:
+Global (module-level) configuration example:
 
 ```ts
-// Global (module-level)
 UndiciModule.forRoot({
   baseURL: 'https://api.example.com',
   requestInterceptors: [
@@ -288,8 +289,11 @@ UndiciModule.forRoot({
     },
   ],
 });
+```
 
-// Per request
+Per-request override (replaces the global interceptors for this call):
+
+```ts
 await http.get('/users', {
   requestInterceptors: [
     async (cfg) => ({
@@ -306,6 +310,37 @@ await http.get('/users', {
 });
 ```
 
+Managing interceptors at runtime:
+
+```ts
+import { UndiciService } from '@toxicoder/nestjs-undici';
+
+@Injectable()
+class ApiService {
+  constructor(private readonly http: UndiciService) {
+    // Add a request interceptor dynamically
+    const rq = this.http.interceptors.request.add(async (cfg) => {
+      return { ...cfg, headers: { ...(cfg.headers ?? {}), 'x-runtime': '1' } };
+    });
+
+    // Add a response interceptor dynamically
+    const rs = this.http.interceptors.response.add(async (res, err) => {
+      if (err) { return res; // inspect error if needed
+       }
+      return { ...res, headers: { ...res.headers, 'x-seen': 'true' } };
+    });
+
+    // You can later remove them when no longer needed
+    this.http.interceptors.request.remove(rq);
+    this.http.interceptors.response.remove(rs);
+  }
+}
+```
+
+Notes
+
+- The default `errorStrategy` becomes `intercept` when response interceptors are present. You can always set `errorStrategy` explicitly per request.
+
 ### Per-request overrides
 
 Most configuration options can be overridden per request by passing an `options` object to the helper methods or to `request()`:
@@ -316,7 +351,7 @@ Most configuration options can be overridden per request by passing an `options`
 - parse (enable/disable auto-parsing)
 - tls (per-request TLS options used when creating transient Agent/Pool)
 - errorStrategy ('throw' | 'pass' | 'intercept')
-- requestInterceptors / responseInterceptors (appended to global interceptors, run in order)
+- requestInterceptors / responseInterceptors (replace the global interceptors for that request)
 
 Note: `retry` is configured at the service level. If you supply a custom dispatcher per request, retry wrapping is bypassed.
 
@@ -329,6 +364,12 @@ Note: `retry` is configured at the service level. If you supply a custom dispatc
   - `forRootAsync(options: UndiciAsyncOptions): DynamicModule`
 
 ### UndiciService
+
+Properties
+
+- `interceptors: { request: RequestInterceptors; response: ResponseInterceptors }` — allows runtime management of interceptors (`add`/`remove`).
+
+Methods
 
 - `get<TBody, TRaw = string | Buffer | ArrayBuffer>(url, options?)`
 - `post<TBody, TRaw = string | Buffer | ArrayBuffer>(url, body, options?)`
@@ -350,6 +391,7 @@ Behavioral notes:
 - `UndiciRequestConfig`: internal request configuration (url, headers, body, timeout, tls, signal, and the same override options)
 - `UndiciResponse<TBody, TRaw>`: response union with typed `body` and optional `rawBody` and `error`
 - `UndiciRequestInterceptor`, `UndiciResponseInterceptor`
+- `RequestInterceptors`, `ResponseInterceptors`, `Interceptors` (runtime classes to manage and apply interceptors)
 - `UndiciTlsOptions`, `UndiciRetryOptions`
 - `UndiciAsyncOptions` and `UndiciConfigFactory`
 
@@ -394,6 +436,7 @@ Jest config: `jest.config.ts` (rootDir='./', testMatch='<rootDir>/tests/*.spec.t
 
 ## Changelog
 
+- 0.0.2: Refactored interceptors into classes (`src/interceptors`). Added runtime management via `UndiciService.interceptors` (`add`/`remove`). Changed per-request interceptors to replace, not append, the global pipeline. Updated tests and docs.
 - 0.0.1: Initial implementation and test suite.
 
 ## License
