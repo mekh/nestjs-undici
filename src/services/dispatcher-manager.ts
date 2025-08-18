@@ -14,8 +14,8 @@ type PoolOptions = Pick<Config, 'pool'>;
 type RetryOptions = Pick<Config, 'retry'>;
 type TlsOptions = Pick<Config, 'tls'>;
 
-export class DispatchersManager {
-  private readonly logger = new Logger(DispatchersManager.name);
+export class DispatcherManager {
+  private readonly logger = new Logger(DispatcherManager.name);
 
   private readonly pools = new Map<string, Dispatcher>();
 
@@ -82,14 +82,12 @@ export class DispatchersManager {
       dispatcher instanceof CustomAgent ||
       dispatcher instanceof CustomRetryAgent
     ) {
-      console.log('Closing custom dispatcher');
       await this.close(dispatcher);
     }
   }
 
   protected async close(dispatcher?: Dispatcher): Promise<void> {
     if (dispatcher) {
-      console.log('Closing dispatcher');
       await dispatcher.close();
     }
   }

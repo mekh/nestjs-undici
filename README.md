@@ -385,7 +385,7 @@ Methods
 - `put<TBody, TRaw = string | Buffer | ArrayBuffer>(url, body, options?)`
 - `patch<TBody, TRaw = string | Buffer | ArrayBuffer>(url, body, options?)`
 - `delete<TBody, TRaw = string | Buffer | ArrayBuffer>(url, options?)`
-- `request<TBody, TRaw>(config: UndiciRequestConfig)` — low-level method used by helpers. Supports per-request overrides: `headers`, `timeout`, `signal`, `dispatcher`, `rawBody`, `parse`, `tls`, `errorStrategy`, `requestInterceptors`, `responseInterceptors`.
+- `request<TBody, TRaw>(options: UndiciRequestOptions)` — low-level method used by helpers. Provide `path` (absolute URL or relative when `baseURL` is set) and any per-request overrides: `headers`, `timeout`, `signal`, `dispatcher`, `rawBody`, `parse`, `tls`, `errorStrategy`, `requestInterceptors`, `responseInterceptors`.
 
 Behavioral notes:
 
