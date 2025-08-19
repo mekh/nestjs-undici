@@ -28,6 +28,7 @@ A lightweight NestJS library built on top of the undici HTTP client. It provides
   - [Error strategies](#error-strategies)
   - [Interceptors](#interceptors)
   - [Per-request overrides](#per-request-overrides)
+- [Type safety](#type-safety)
 - [API reference](#api-reference)
   - [UndiciModule](#undicimodule)
   - [UndiciService](#undiciservice)
@@ -363,6 +364,100 @@ Most configuration options can be overridden per request by passing an `options`
 - requestInterceptors / responseInterceptors (replace the global interceptors for that request)
 
 Note: `retry` is configured at the service level. If you supply a custom dispatcher per request, retry wrapping is bypassed.
+
+## Type safety
+
+UndiciService supports compile-time type-safety for response bodies with a flexible model using the `TypeSafety` enum.
+
+- Default mode: GUARDED
+- Import: `import { UndiciService, TypeSafety } from '@toxicoder/nestjs-undici'`
+
+Concepts:
+
+- Each request returns `UndiciResponse<TBody, TRaw, TSafety>` where:
+  - `TBody` — the expected body type after parsing (e.g., a DTO or interface)
+  - `TRaw` — the raw body type when `rawBody: true` (defaults to `string | Buffer | ArrayBuffer`)
+  - `TSafety` — affects whether the return type is a union with a potential error
+
+Modes:
+
+- TypeSafety.GUARDED (default)
+  - Success shape: `{ body: TBody | null; rawBody: TRaw | null }` (rawBody present only when `rawBody: true`)
+  - Error shape: union with `{ error: Error; body: TBody | BodyReadable | null; rawBody: TRaw | BodyReadable | null }`
+  - You must handle the union when your `errorStrategy` is not 'throw'.
+- TypeSafety.UNSAFE
+  - Return type is forced to the success shape only, i.e., no error union in the type system. This removes compile-time safeguards and can lead to runtime errors if misused (see warnings below).
+
+Using GUARDED (default):
+
+```ts
+@Injectable()
+export class ApiService {
+  constructor(private readonly http: UndiciService) {}
+
+  async getUser(id: string): Promise<{ id: string; name: string } | null> {
+    const res = await this.http.get<{ id: string; name: string }>(
+      `/users/${id}`,
+    );
+    // res: UndiciResponse<{id: string; name: string}, string|Buffer|ArrayBuffer, TypeSafety.GUARDED>
+    if ('error' in res) {
+      // handle error; res.body may be parsed JSON, text, ArrayBuffer or null depending on config
+      throw res.error;
+    }
+
+    return res.body; // typed as {id: string; name: string} | null
+  }
+}
+```
+
+Specifying the return type for request():
+
+```ts
+// TRaw defaults to string | Buffer | ArrayBuffer when omitted
+const res = await http.request<{ ok: boolean }>({
+  path: '/ping',
+  method: 'GET',
+});
+```
+
+Opting into UNSAFE at the service type level:
+
+```ts
+@Injectable()
+export class UnsafeApiService {
+  // Note the generic TypeSafety.UNSAFE on the service type annotation
+  constructor(private readonly http: UndiciService<TypeSafety.UNSAFE>) {}
+
+  async create(dto: any) {
+    const res = await this.http.post<{ id: string }>(`/items`, dto);
+    // res.body is typed as { id: string } (no union), which is convenient but potentially unsafe
+    return res.body;
+  }
+}
+```
+
+Important: When to use TypeSafety.UNSAFE
+
+- Justified ONLY when:
+  - errorStrategy is 'throw' (errors are thrown, and you never see error unions in the response), OR
+  - you use response interceptors with errorStrategy 'intercept' and validate both possible error and the success body rigorously inside the interceptors.
+
+Strict warning about UNSAFE with 'pass'
+
+- Using TypeSafety.UNSAFE together with `errorStrategy = 'pass'` is extremely dangerous: the function will appear to return a successful shape at compile time while, at runtime, the response may actually contain an error. This very likely leads to runtime crashes or invalid assumptions in your code. Avoid this combination.
+
+Cheat sheet examples:
+
+```ts
+// Default GUARDED mode
+const a = await http.get<{ ok: true }>(`/ok`);
+// a is union (success | error) unless errorStrategy='throw'
+
+// Explicit UNSAFE service annotation
+const httpUnsafe: UndiciService<TypeSafety.UNSAFE> = http;
+const b = await httpUnsafe.get<{ ok: true }>(`/ok`);
+// b is success-only in types, i.e. { ok: true }
+```
 
 ## API reference
 

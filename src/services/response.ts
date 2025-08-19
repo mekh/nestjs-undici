@@ -2,6 +2,7 @@ import { Logger } from '@nestjs/common';
 import { Dispatcher, errors } from 'undici';
 
 import { ResponseInterceptors } from '../interceptors/res.interceptors';
+import { TypeSafety } from '../undici.enum';
 import {
   UndiciConfig,
   UndiciRequestConfig,
@@ -16,15 +17,15 @@ type RawRes = Dispatcher.ResponseData;
 type RawBody = Dispatcher.ResponseData['body'] | string | ArrayBuffer;
 
 export class Response {
-  public static async handle<TBody, TRes>(
+  public static async handle<TBody, TRes, TSafety extends TypeSafety>(
     req: UndiciRequestConfig,
     res: RawRes,
     config: UndiciConfig,
     interceptors: ResponseInterceptors,
-  ): Promise<UndiciResponse<TBody, TRes>> {
+  ): Promise<UndiciResponse<TBody, TRes, TSafety>> {
     const response = new Response(req, res, config, interceptors);
 
-    return await response.handle() as UndiciResponse<TBody, TRes>;
+    return await response.handle() as UndiciResponse<TBody, TRes, TSafety>;
   }
 
   private readonly logger = new Logger(Response.name);

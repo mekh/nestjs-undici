@@ -3,6 +3,7 @@ import { Inject, Injectable, OnModuleDestroy } from '@nestjs/common';
 import { Interceptors } from './interceptors';
 import { DispatcherManager, Request, Response } from './services';
 import { UNDICI_CLIENT_OPTIONS } from './undici.constants';
+import { TypeSafety } from './undici.enum';
 import {
   UndiciConfig,
   UndiciOptionsDelete,
@@ -18,7 +19,9 @@ import {
 type Raw = string | Buffer | ArrayBuffer;
 
 @Injectable()
-export class UndiciService implements OnModuleDestroy {
+export class UndiciService<
+  TSafety extends TypeSafety = TypeSafety.GUARDED,
+> implements OnModuleDestroy {
   public readonly interceptors: Interceptors;
 
   public readonly dispatchers: DispatcherManager;
@@ -41,7 +44,7 @@ export class UndiciService implements OnModuleDestroy {
   async get<TBody, TRaw = Raw>(
     path: string,
     options?: UndiciOptionsGet,
-  ): Promise<UndiciResponse<TBody, TRaw>> {
+  ): Promise<UndiciResponse<TBody, TRaw, TSafety>> {
     return this.request<TBody, TRaw>({ ...options, path, method: 'GET' });
   }
 
@@ -49,7 +52,7 @@ export class UndiciService implements OnModuleDestroy {
     path: string,
     body: UndiciRequestBody,
     options?: UndiciOptionsPost,
-  ): Promise<UndiciResponse<TBody, TRaw>> {
+  ): Promise<UndiciResponse<TBody, TRaw, TSafety>> {
     return this.request<TBody, TRaw>({
       ...options,
       path,
@@ -62,7 +65,7 @@ export class UndiciService implements OnModuleDestroy {
     path: string,
     body: UndiciRequestBody,
     options?: UndiciOptionsPut,
-  ): Promise<UndiciResponse<TBody, TRaw>> {
+  ): Promise<UndiciResponse<TBody, TRaw, TSafety>> {
     return this.request<TBody, TRaw>({ ...options, path, method: 'PUT', body });
   }
 
@@ -70,7 +73,7 @@ export class UndiciService implements OnModuleDestroy {
     path: string,
     body: UndiciRequestBody,
     options?: UndiciOptionsPatch,
-  ): Promise<UndiciResponse<TBody, TRaw>> {
+  ): Promise<UndiciResponse<TBody, TRaw, TSafety>> {
     return this.request<TBody, TRaw>({
       ...options,
       path,
@@ -82,13 +85,13 @@ export class UndiciService implements OnModuleDestroy {
   async delete<TBody, TRaw = Raw>(
     path: string,
     options?: UndiciOptionsDelete,
-  ): Promise<UndiciResponse<TBody, TRaw>> {
+  ): Promise<UndiciResponse<TBody, TRaw, TSafety>> {
     return this.request<TBody, TRaw>({ ...options, path, method: 'DELETE' });
   }
 
-  public async request<TBody, TRaw>(
+  public async request<TBody, TRaw = Raw>(
     options: UndiciRequestOptions,
-  ): Promise<UndiciResponse<TBody, TRaw>> {
+  ): Promise<UndiciResponse<TBody, TRaw, TSafety>> {
     const { req, res } = await Request.execute(
       options,
       this.dispatchers,
@@ -96,7 +99,7 @@ export class UndiciService implements OnModuleDestroy {
       this.config.baseURL,
     );
 
-    return Response.handle(
+    return Response.handle<TBody, TRaw, TSafety>(
       req,
       res,
       this.config,

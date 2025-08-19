@@ -2,6 +2,7 @@ import { ModuleMetadata, Type } from '@nestjs/common';
 import { Readable } from 'stream';
 import { Dispatcher, FormData, Pool, RetryHandler } from 'undici';
 import BodyReadable from 'undici/types/readable';
+import { TypeSafety } from './undici.enum';
 
 export type UndiciRetryOptions = RetryHandler.RetryOptions;
 export type UndiciPoolOptions = Omit<
@@ -134,13 +135,14 @@ export interface UndiciRequestConfig extends
 export interface UndiciSuccessRes<
   TBody,
   TRaw = string | Buffer | ArrayBuffer,
+  TSafety extends TypeSafety = TypeSafety.GUARDED,
 > extends
   Omit<
     Dispatcher.ResponseData,
     'body'
   > {
-  body: TBody | null;
-  rawBody: TRaw | null;
+  body: TSafety extends TypeSafety.UNSAFE ? TBody : TBody | null;
+  rawBody: TSafety extends TypeSafety.UNSAFE ? TRaw : TRaw | null;
 }
 
 export interface UndiciErrorRes<
@@ -159,7 +161,9 @@ export interface UndiciErrorRes<
 export type UndiciResponse<
   TBody,
   TRaw = string | Buffer | ArrayBuffer,
-> = UndiciSuccessRes<TBody, TRaw> | UndiciErrorRes<TBody, TRaw>;
+  TSafety extends TypeSafety = TypeSafety.GUARDED,
+> = TSafety extends TypeSafety.UNSAFE ? UndiciSuccessRes<TBody, TRaw, TSafety>
+  : UndiciSuccessRes<TBody, TRaw, TSafety> | UndiciErrorRes<TBody, TRaw>;
 
 export type UndiciRequestInterceptor = (
   config: UndiciRequestConfig,
