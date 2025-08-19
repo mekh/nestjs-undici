@@ -139,3 +139,16 @@ export const request = jest.fn(async (url: URL, options: any) => {
 request.setNextResponse = (res: any): void => {
   request._nextResponse = res;
 };
+
+export const fetch = jest.fn(async () => {
+  if (fetch._nextResponse) {
+    const res = fetch._nextResponse;
+    fetch._nextResponse = undefined;
+    return res;
+  }
+  return { headers: {} };
+}) as any;
+
+fetch.setNextResponse = (res: any): void => {
+  fetch._nextResponse = res;
+};

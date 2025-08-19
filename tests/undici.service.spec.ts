@@ -8,6 +8,7 @@ import {
   FormData,
   MockBody,
   Pool,
+  ResponseStatusCodeError,
   RetryAgent,
   errors,
   getPoolInstances,
@@ -155,8 +156,8 @@ describe('UndiciService', () => {
       }),
     );
     const res = await service.get('/empty');
-    expect(res.body).toBeNull();
-    expect(res.rawBody).toBeInstanceOf(ArrayBuffer);
+    expect(res.body).toBe('');
+    expect(res.rawBody).toBe('');
   });
 
   it('parse: text', async () => {
@@ -209,38 +210,6 @@ describe('UndiciService', () => {
     expect(res.rawBody).toMatch('{ "a" :  1 }');
   });
 
-  it('status 204 returns null bodies', async () => {
-    const moduleRef = await createModule();
-    const service = moduleRef.get(UndiciService);
-
-    request.setNextResponse(
-      makeResponse({
-        statusCode: 204,
-        headers: {},
-        body: new MockBody({ text: '' }),
-      }),
-    );
-    const res = await service.get('/no-content');
-    expect(res.body).toBeNull();
-    expect(res.rawBody).toBeNull();
-  });
-
-  it('status 205 returns null bodies', async () => {
-    const moduleRef = await createModule();
-    const service = moduleRef.get(UndiciService);
-
-    request.setNextResponse(
-      makeResponse({
-        statusCode: 205,
-        headers: {},
-        body: new MockBody({ text: '' }),
-      }),
-    );
-    const res = await service.get('/reset-content');
-    expect(res.body).toBeNull();
-    expect(res.rawBody).toBeNull();
-  });
-
   it('parse: malformed json throws and logs debug', async () => {
     const moduleRef = await createModule();
     const service = moduleRef.get(UndiciService);
@@ -287,7 +256,7 @@ describe('UndiciService', () => {
       }),
     );
     const res: any = await service.get('/nf');
-    expect(res.error).toBeInstanceOf(errors.ResponseStatusCodeError);
+    expect(res.error).toBeInstanceOf(ResponseStatusCodeError);
     expect(res.rawBody).toBeNull();
   });
 
@@ -305,13 +274,13 @@ describe('UndiciService', () => {
       }),
     );
     const res = await service.get('/bad');
-    expect(res.rawBody).toBeInstanceOf(MockBody);
+    expect(res.rawBody).toBeInstanceOf(ArrayBuffer);
   });
 
   it('errorStrategy: invokes interceptors with parsed body and error', async () => {
     const interceptor = jest.fn(async (resp, err) => {
       expect(err).toBeInstanceOf(errors.ResponseStatusCodeError);
-      expect(err.body).toContain('"x":1');
+      expect(err.body).toStrictEqual({ x: 1 });
       return { ...resp, body: { wrapped: resp.body } };
     });
     const moduleRef = await createModule({
@@ -647,7 +616,7 @@ describe('UndiciService', () => {
   });
 
   it('errorStrategy defaults to intercept when interceptors exist (no explicit strategy)', async () => {
-    const interceptor = jest.fn((resp, err) => resp);
+    const interceptor = jest.fn((resp) => resp);
     const moduleRef = await createModule({
       responseInterceptors: [interceptor],
     });
@@ -706,5 +675,116 @@ describe('UndiciService', () => {
 
     expect(Pool.created).toHaveLength(1);
     expect(Pool.created[0].options).toBeDefined();
+  });
+
+  // New tests
+  it('headers() performs HEAD request via undici.fetch and returns headers', async () => {
+    const moduleRef = await createModule();
+    const service = moduleRef.get(UndiciService);
+
+    const headersObj = { 'x-test': '1' } as any;
+    const { fetch } = require('./__helpers__/undici-mock');
+    fetch.setNextResponse({ headers: headersObj });
+
+    const headers = await service.headers('https://h.example/a');
+
+    // Verify method set to HEAD on fetch call
+    const call = fetch.mock.calls[0];
+    expect(call[0]).toBe('https://h.example/a');
+    expect(call[1].method).toBe('HEAD');
+    expect(headers).toBe(headersObj);
+  });
+
+  it('consumes body when parse=true (success) by calling arrayBuffer()', async () => {
+    const moduleRef = await createModule({ parse: true });
+    const service = moduleRef.get(UndiciService);
+
+    const body = new MockBody({
+      arrayBuffer: new TextEncoder().encode('{"a":1}').buffer,
+    });
+    const spy = jest.spyOn(body as any, 'arrayBuffer');
+
+    request.setNextResponse(
+      makeResponse({
+        statusCode: 200,
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+    );
+
+    await service.get('/consume-ok');
+    expect(spy).toHaveBeenCalled();
+  });
+
+  it('does not consume body when parse=false', async () => {
+    const moduleRef = await createModule({ parse: false });
+    const service = moduleRef.get(UndiciService);
+
+    const body = new MockBody({ text: 'hello' });
+    const spyText = jest.spyOn(body as any, 'text');
+    const spyBuf = jest.spyOn(body as any, 'arrayBuffer');
+
+    request.setNextResponse(
+      makeResponse({
+        statusCode: 200,
+        headers: { 'content-type': 'text/plain' },
+        body,
+      }),
+    );
+
+    const res = await service.get<any>('/no-consume');
+    expect(res.body).toBe(body);
+    expect(spyText).not.toHaveBeenCalled();
+    expect(spyBuf).not.toHaveBeenCalled();
+  });
+
+  it('consumes error body with errorStrategy=throw', async () => {
+    const moduleRef = await createModule({
+      parse: true,
+      errorStrategy: 'throw',
+    });
+    const service = moduleRef.get(UndiciService);
+
+    const body = new MockBody({ text: 'server error' });
+    const spyBuf = jest.spyOn(body as any, 'arrayBuffer');
+
+    request.setNextResponse(
+      makeResponse({
+        statusCode: 500,
+        headers: { 'content-type': 'text/plain' },
+        body,
+      }),
+    );
+
+    await expect(service.get('/err-consume')).rejects.toBeInstanceOf(
+      errors.ResponseStatusCodeError,
+    );
+
+    expect(spyBuf).toHaveBeenCalled();
+  });
+
+  it('consumes body with errorStrategy=pass (non-throw) by calling arrayBuffer()', async () => {
+    const moduleRef = await createModule({
+      parse: true,
+      errorStrategy: 'pass',
+    });
+    const service = moduleRef.get(UndiciService);
+
+    const body = new MockBody({
+      arrayBuffer: new TextEncoder().encode('{"e":1}').buffer,
+    });
+    const spyBuf = jest.spyOn(body as any, 'arrayBuffer');
+
+    request.setNextResponse(
+      makeResponse({
+        statusCode: 400,
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+    );
+
+    const res = await service.get<any>('/err-pass');
+    expect(res.statusCode).toBe(400);
+    expect(spyBuf).toHaveBeenCalled();
   });
 });

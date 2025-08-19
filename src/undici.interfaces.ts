@@ -1,5 +1,6 @@
 import { ModuleMetadata, Type } from '@nestjs/common';
 import { Readable } from 'stream';
+import { SecureContextOptions } from 'tls';
 import { Dispatcher, FormData, Pool, RetryHandler } from 'undici';
 import BodyReadable from 'undici/types/readable';
 import { TypeSafety } from './undici.enum';
@@ -31,7 +32,7 @@ export type UndiciBaseRequestOptions<TOpaque = null> =
   & { dispatcher?: Dispatcher }
   & Omit<
     Dispatcher.RequestOptions<TOpaque>,
-    'origin' | 'path' | 'headers' | 'body'
+    'origin' | 'path' | 'headers' | 'body' | 'throwOnError'
   >;
 
 export type Exact<T, Shape> =
@@ -174,22 +175,7 @@ export type UndiciResponseInterceptor = (
   error?: any,
 ) => UndiciResponse<any> | Promise<UndiciResponse<any>>;
 
-type TlsKey = string | Buffer | (string | Buffer)[];
-
-export interface UndiciTlsOptions {
-  /**
-   * Common Authority certificate
-   */
-  ca?: TlsKey;
-  /**
-   * Private Key certificate
-   */
-  key?: TlsKey;
-  /**
-   * Public Key certificate
-   */
-  cert?: TlsKey;
-}
+export type UndiciTlsOptions = SecureContextOptions;
 
 export interface UndiciConfig extends UndiciBaseRequestConfig {
   /**
@@ -218,6 +204,8 @@ export interface UndiciConfig extends UndiciBaseRequestConfig {
    */
   retry?: UndiciRetryOptions | boolean;
 }
+
+export type UndiciRequestDefaults = Omit<UndiciBaseRequestConfig, 'dispatcher'>;
 
 export type UndiciOptionsGet = Omit<UndiciRequestOptions, 'method' | 'path'>;
 export type UndiciOptionsPost = Omit<UndiciOptionsGet, 'body'>;

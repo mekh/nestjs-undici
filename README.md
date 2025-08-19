@@ -25,6 +25,7 @@ A lightweight NestJS library built on top of the undici HTTP client. It provides
   - [Retry](#retry)
   - [TLS](#tls)
   - [Parsing and streaming](#parsing-and-streaming)
+  - [Important: parse=false and body consumption](#important-parsefalse-and-body-consumption)
   - [Error strategies](#error-strategies)
   - [Interceptors](#interceptors)
   - [Per-request overrides](#per-request-overrides)
@@ -256,15 +257,42 @@ UndiciModule.forRoot({
   - `text/*` → body and rawBody are strings
   - `application/json` and `*+json` → body is JSON (parsed object), rawBody is the original string
   - Unknown/binary content-types → body and rawBody are `ArrayBuffer`
-  - Status 204/205 → both `body` and `rawBody` are `null`
 - `parse: false`: the service returns the undici `BodyReadable` without consumption/parsing (streaming mode). Interceptors receive the raw stream.
 
 You can control `parse` globally or per request.
 
+### Important: parse=false and body consumption
+
+Undici in Node.js does not aggressively or deterministically GC unused response bodies. If you leave the body unconsumed, you can leak connections, reduce connection reuse, and even stall when running out of connections.
+
+Therefore, when you use `parse: false` in this library, you (the caller) are responsible for consuming or canceling the response body yourself — either inside a response interceptor or in your application code.
+
+Do:
+
+```ts
+const { body, headers } = await undiciService.get(url, { parse: false });
+for await (const _ of body as any) {
+  // Consume the stream to release the connection
+}
+```
+
+Do not:
+
+```ts
+const { headers } = await undiciService.get(url, { parse: false });
+// WRONG: body is left unconsumed → can leak connections
+```
+
+If you need only headers, call the dedicated method:
+
+```ts
+const headers = await undiciService.headers(url);
+```
+
 ### Error strategies
 
 - `throw` (default unless response interceptors exist): throws `ResponseStatusCodeError` for HTTP status >= 400. The error body is consumed if parsing would not happen later.
-- `pass`: returns the response with an `error` property; `body` is the raw stream and `rawBody` is either the same stream (when `rawBody=true`) or `null`.
+- `pass`: returns the response with an `error` property (an instance of `ResponseStatusCodeError`); `error.body` and `body` are parsed according to the parse rules.
 - `intercept`: calls response interceptors with the parsed body and the error; if there are no interceptors, the error is thrown.
 
 You can set the error strategy globally via module config or per-request via `errorStrategy` option.
@@ -335,8 +363,9 @@ class ApiService {
 
     // Add a response interceptor dynamically
     const rs = this.http.interceptors.response.add(async (res, err) => {
-      if (err) { return res; // inspect error if needed
-       }
+      if (err) {
+        return res; // inspect error if needed
+      }
       return { ...res, headers: { ...res.headers, 'x-seen': 'true' } };
     });
 
@@ -480,6 +509,7 @@ Methods
 - `put<TBody, TRaw = string | Buffer | ArrayBuffer>(url, body, options?)`
 - `patch<TBody, TRaw = string | Buffer | ArrayBuffer>(url, body, options?)`
 - `delete<TBody, TRaw = string | Buffer | ArrayBuffer>(url, options?)`
+- `headers(input: RequestInfo, options?: Omit<RequestInit, 'method'>): Promise<Headers>` — performs a HEAD request using undici.fetch and returns response headers. Use this when you need only headers without consuming the body.
 - `request<TBody, TRaw>(options: UndiciRequestOptions)` — low-level method used by helpers. Provide `path` (absolute URL or relative when `baseURL` is set) and any per-request overrides: `headers`, `timeout`, `signal`, `dispatcher`, `rawBody`, `parse`, `tls`, `errorStrategy`, `requestInterceptors`, `responseInterceptors`.
 
 Behavioral notes:
@@ -510,6 +540,8 @@ Unit tests (see tests/*.spec.ts) cover:
 - Parsing matrix: empty body, text, application/json, *+json, application/octet-stream, and 204/205 statuses
 - Malformed JSON behavior (throws and logs debug)
 - Error strategies: throw, pass (with/without rawBody), intercept (with/without interceptors)
+- Body consumption semantics: body is consumed in all cases except `parse: false`, including error cases
+- `UndiciService.headers()` HEAD helper
 - Request interceptors cloning and modification
 - Case-insensitive header lookup
 - isPlainObject exclusions (Buffer, ArrayBuffer views, URLSearchParams, streams, FormData)

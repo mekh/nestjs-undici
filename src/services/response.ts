@@ -34,8 +34,6 @@ export class Response {
 
   private readonly errorStrategy: ErrorStrategy;
 
-  private readonly noContentStatusCodes = [204, 205];
-
   private error?: ResponseStatusCodeError;
 
   private rawBody: RawBody | null = null;
@@ -59,16 +57,23 @@ export class Response {
     return this.errorStrategy === 'pass';
   }
 
+  private get shouldParseBody(): boolean {
+    return !!this.req.parse || !!this.config.parse;
+  }
+
   public async handle(): Promise<UndiciResponse<any>> {
     await this.parseError();
 
-    if (this.error && this.shouldPass) {
-      return this.formatOut(this.res.body);
-    }
+    const body = this.shouldParseBody
+      ? await this.parseBody()
+      : this.res.body;
 
-    const body = await this.parseBody();
     if (this.error) {
-      this.error.body = this.rawBody;
+      this.error.body = body;
+
+      if (this.shouldPass) {
+        return this.formatOut(body);
+      }
     }
 
     return this.interceptors.apply(
@@ -78,23 +83,8 @@ export class Response {
     );
   }
 
-  private async parseBody(): Promise<RawBody | null> {
-    const shouldParse = this.req.parse ?? this.config.parse;
-
-    if (shouldParse === false) {
-      return this.rawBody;
-    }
-
-    if (this.noContentStatusCodes.includes(this.res.statusCode)) {
-      this.rawBody = null;
-
-      return null;
-    }
-
+  private async parseBody(strictJson = true): Promise<RawBody | null> {
     this.rawBody = await this.res.body.arrayBuffer();
-    if (this.rawBody.byteLength === 0) {
-      return null;
-    }
 
     const isJson = this.headers.isJson();
     const isText = this.headers.isText();
@@ -115,6 +105,10 @@ export class Response {
     try {
       return JSON.parse(trimmed);
     } catch (e) {
+      if (!strictJson) {
+        return trimmed;
+      }
+
       const { method, url } = this.req;
       this.logger.debug(
         `JSON parse failed: ${method} ${url.href} → ${this.res.statusCode}`,
@@ -137,8 +131,15 @@ export class Response {
       null,
     );
 
+    /** There is no need to include the stack trace in the error object.*/
+    this.error.stack = 'ResponseStatusCodeError: Response error';
+
     if (this.shouldThrow) {
-      this.error.body = await this.res.body.text();
+      if (this.shouldParseBody) {
+        this.error.body = await this.parseBody(false);
+      } else {
+        await this.res.body.dump();
+      }
 
       throw this.error;
     }
