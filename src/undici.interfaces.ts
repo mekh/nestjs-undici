@@ -4,7 +4,16 @@ import { Dispatcher, FormData, Pool, RetryHandler } from 'undici';
 import BodyReadable from 'undici/types/readable';
 
 export type UndiciRetryOptions = RetryHandler.RetryOptions;
-export type UndiciPoolOptions = Pool.Options;
+export type UndiciPoolOptions = Omit<
+  Pool.Options,
+  /** Omit deprecated options*/
+  | 'socketTimeout' // use headersTimeout & bodyTimeout
+  | 'requestTimeout' // use headersTimeout & bodyTimeout
+  | 'idleTimeout' // use keepAliveTimeout instead
+  | 'keepAlive' // use pipelining=0
+  | 'maxKeepAliveTimeout' // use keepAliveMaxTimeout
+  | 'tls' // use the connect option
+>;
 
 export type UndiciRequestBody =
   | string
