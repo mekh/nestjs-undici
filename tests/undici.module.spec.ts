@@ -4,11 +4,12 @@ import { Test } from '@nestjs/testing';
 
 jest.mock('undici', () => require('./__helpers__/undici-mock'));
 
-import { UndiciModule, UndiciService } from '../src';
 import {
   UndiciConfig,
   UndiciConfigFactory,
-} from '../src/undici.interfaces';
+  UndiciModule,
+  UndiciService,
+} from '../src';
 import {
   makeResponse,
   request,
@@ -56,6 +57,63 @@ describe('UndiciModule', () => {
     request.setNextResponse(makeResponse());
     const res = await svc.get('/x');
     expect(res.statusCode).toBe(200);
+  });
+
+  it('forRoot default config', async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [UndiciModule.forRoot({})],
+    }).compile();
+
+    const svc = moduleRef.get(UndiciService);
+    expect(svc.defaults.timeout).toBeUndefined();
+    expect(svc.defaults.rawBody).toBe(false);
+    expect(svc.defaults.parse).toBe(true);
+    expect(svc.defaults.retry).toBe(false);
+    expect(svc.defaults.errorStrategy).toBe('throw');
+  });
+
+  it('forRoot default + provided config', async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [UndiciModule.forRoot({ rawBody: true })],
+    }).compile();
+
+    const svc = moduleRef.get(UndiciService);
+    expect(svc.defaults.timeout).toBeUndefined();
+    expect(svc.defaults.rawBody).toBe(true);
+    expect(svc.defaults.parse).toBe(true);
+    expect(svc.defaults.retry).toBe(false);
+    expect(svc.defaults.errorStrategy).toBe('throw');
+  });
+
+  it('forRootAsync default config', async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [UndiciModule.forRootAsync({})],
+    }).compile();
+
+    const svc = moduleRef.get(UndiciService);
+    expect(svc.defaults.timeout).toBeUndefined();
+    expect(svc.defaults.rawBody).toBe(false);
+    expect(svc.defaults.parse).toBe(true);
+    expect(svc.defaults.retry).toBe(false);
+    expect(svc.defaults.errorStrategy).toBe('throw');
+  });
+
+  it('forRootAsync useFactory default + provided config', async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [UndiciModule.forRootAsync({
+        useFactory: (): UndiciConfig => ({
+          retry: true,
+          errorStrategy: 'pass',
+        }),
+      })],
+    }).compile();
+
+    const svc = moduleRef.get(UndiciService);
+    expect(svc.defaults.timeout).toBeUndefined();
+    expect(svc.defaults.rawBody).toBe(false);
+    expect(svc.defaults.parse).toBe(true);
+    expect(svc.defaults.retry).toBe(true);
+    expect(svc.defaults.errorStrategy).toBe('pass');
   });
 
   it('forRoot provides service with provided options', async () => {

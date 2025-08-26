@@ -20,6 +20,7 @@ import {
 } from './undici.interfaces';
 
 type Raw = string | Buffer | ArrayBuffer;
+type Defaults = Exact<UndiciConfig, UndiciRequestDefaults>;
 
 @Injectable()
 export class UndiciService<
@@ -29,7 +30,7 @@ export class UndiciService<
 
   public readonly dispatchers: DispatcherManager;
 
-  public readonly defaults: Exact<UndiciConfig, UndiciRequestDefaults>;
+  public readonly defaults: Defaults;
 
   constructor(
     @Inject(UNDICI_CLIENT_OPTIONS) private readonly config: UndiciConfig,
@@ -40,7 +41,7 @@ export class UndiciService<
     );
 
     this.dispatchers = new DispatcherManager(this.config);
-    const { dispatcher, pool, baseURL, retry, ...defaultConfig } = this.config;
+    const { dispatcher, pool, baseURL, ...defaultConfig } = this.config;
 
     this.defaults = defaultConfig;
   }

@@ -41,12 +41,15 @@ export type Exact<T, Shape> =
     [K in Exclude<keyof T, keyof Shape>]?: never;
   };
 
+export type UndiciErrorStrategy = 'throw' | 'intercept' | 'pass';
+
 interface UndiciBaseRequestConfig {
   /**
    * The default timeout in milliseconds.
    * Can be overridden by the `timeout` option in the request config.
    */
   timeout?: number;
+  retry?: UndiciRetryOptions | boolean;
   requestInterceptors?: UndiciRequestInterceptor[];
   /**
    * The response interceptors get an object with a parsed body if:
@@ -105,7 +108,7 @@ interface UndiciBaseRequestConfig {
    * passing the response body and the error as arguments.
    * Will throw if there are no response interceptors.
    */
-  errorStrategy?: 'throw' | 'pass' | 'intercept';
+  errorStrategy?: UndiciErrorStrategy;
 }
 
 /**

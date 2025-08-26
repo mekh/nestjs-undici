@@ -54,12 +54,12 @@ describe('UndiciBaseConfig via environment variables', () => {
   });
 
   describe('rawBody', () => {
-    it('is undefined when not set or invalid', () => {
-      expect(cfg.rawBody).toBeUndefined();
+    it('is false when not set or invalid', () => {
+      expect(cfg.rawBody).toBe(false);
 
       process.env.UNDICI_RAW_BODY = 'yes';
       cfg = new UndiciBaseConfig();
-      expect(cfg.rawBody).toBeUndefined();
+      expect(cfg.rawBody).toBe(false);
     });
 
     it('parses literal true/false', () => {
@@ -74,12 +74,12 @@ describe('UndiciBaseConfig via environment variables', () => {
   });
 
   describe('parse', () => {
-    it('is undefined when not set or invalid', () => {
-      expect(cfg.parse).toBeUndefined();
+    it('is true when not set or invalid', () => {
+      expect(cfg.parse).toBe(true);
 
       process.env.UNDICI_RAW_PARSE = 'invalid';
       cfg = new UndiciBaseConfig();
-      expect(cfg.parse).toBeUndefined();
+      expect(cfg.parse).toBe(true);
     });
 
     it('parses literal true/false from UNDICI_RAW_PARSE', () => {
@@ -94,12 +94,12 @@ describe('UndiciBaseConfig via environment variables', () => {
   });
 
   describe('retry', () => {
-    it('is undefined when not set or invalid', () => {
-      expect(cfg.retry).toBeUndefined();
+    it('is false when not set or invalid', () => {
+      expect(cfg.retry).toBe(false);
 
       process.env.UNDICI_RAW_RETRY = 'on';
       cfg = new UndiciBaseConfig();
-      expect(cfg.retry).toBeUndefined();
+      expect(cfg.retry).toBe(false);
     });
 
     it('parses literal true/false from UNDICI_RAW_RETRY', () => {
@@ -114,8 +114,8 @@ describe('UndiciBaseConfig via environment variables', () => {
   });
 
   describe('errorStrategy', () => {
-    it('is undefined when not set', () => {
-      expect(cfg.errorStrategy).toBeUndefined();
+    it('is "throw" when not set', () => {
+      expect(cfg.errorStrategy).toBe('throw');
     });
 
     it('reads a string value when set', () => {

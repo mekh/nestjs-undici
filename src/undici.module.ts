@@ -20,22 +20,26 @@ import { UndiciService } from './undici.service';
   exports: [UndiciService],
 })
 export class UndiciModule {
-  public static forRoot(options: UndiciConfig): DynamicModule {
+  public static forRoot(config: UndiciConfig): DynamicModule {
     return {
       module: UndiciModule,
       providers: [
         {
           provide: UNDICI_CLIENT_OPTIONS,
-          useValue: options,
+          inject: [UndiciBaseConfig],
+          useFactory: (defaults: UndiciBaseConfig) =>
+            this.mergeOptions(config, defaults),
         },
         UndiciService,
+        UndiciBaseConfig,
       ],
       exports: [UndiciService],
     };
   }
 
   public static forRootAsync(options: UndiciAsyncOptions): DynamicModule {
-    const configProvider = this.createOptionsProvider(options);
+    const defaults = new UndiciBaseConfig();
+    const configProvider = this.createOptionsProvider(options, defaults);
 
     return {
       module: UndiciModule,
@@ -45,16 +49,24 @@ export class UndiciModule {
         ...options.providers ?? [],
         configProvider,
         UndiciService,
+        UndiciBaseConfig,
       ],
       exports: [configProvider, UndiciService],
     };
   }
 
-  private static createOptionsProvider(options: UndiciAsyncOptions): Provider {
+  private static createOptionsProvider(
+    options: UndiciAsyncOptions,
+    defaults: UndiciBaseConfig,
+  ): Provider {
     if (options.useFactory) {
       return {
         provide: UNDICI_CLIENT_OPTIONS,
-        useFactory: options.useFactory,
+        useFactory: async (...args: any[]): Promise<UndiciConfig> => {
+          const opts = await options.useFactory!(...args);
+
+          return this.mergeOptions(opts, defaults);
+        },
         inject: options.inject,
       };
     }
@@ -64,7 +76,7 @@ export class UndiciModule {
         provide: UNDICI_CLIENT_OPTIONS,
         inject: [options.useClass],
         useFactory: (config: UndiciConfigFactory) =>
-          config.createUndiciConfig(),
+          this.mergeOptions(config.createUndiciConfig(), defaults),
       };
     }
 
@@ -73,20 +85,30 @@ export class UndiciModule {
         provide: UNDICI_CLIENT_OPTIONS,
         inject: [options.useExisting],
         useFactory: (config: UndiciConfigFactory) =>
-          config.createUndiciConfig(),
+          this.mergeOptions(config.createUndiciConfig(), defaults),
       };
     }
 
     if (options.useValue) {
       return {
         provide: UNDICI_CLIENT_OPTIONS,
-        useValue: options.useValue,
+        useValue: this.mergeOptions(options.useValue, defaults),
       };
     }
 
     return {
       provide: UNDICI_CLIENT_OPTIONS,
-      useValue: {},
+      useValue: defaults,
+    };
+  }
+
+  private static mergeOptions(
+    config: UndiciConfig,
+    defaults: UndiciBaseConfig,
+  ): UndiciConfig {
+    return {
+      ...defaults,
+      ...config,
     };
   }
 }

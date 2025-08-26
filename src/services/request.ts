@@ -132,6 +132,7 @@ export class Request {
       errorStrategy,
       body,
       headers,
+      retry,
       ...undiciOptions
     } = reqConfig;
 
